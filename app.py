@@ -1,59 +1,48 @@
-import streamlit as st
-import pandas as pd
 import os
+import pandas as pd
+import streamlit as st
 from io import BytesIO
-from openpyxl import load_workbook
 
-# ----------------- عنوان التطبيق -----------------
-st.set_page_config(page_title="المراقب الذكي", layout="wide")
+# إعداد الواجهة
+st.set_page_config(page_title="المراقب الذكي - البحث في سجلات الناخبين", layout="wide")
+
 st.title("📊 المراقب الذكي - البحث في سجلات الناخبين")
 
-# ----------------- اختيار طريقة البحث -----------------
-search_mode = st.radio(
-    "اختر طريقة البحث:",
-    ["📂 رفع ملف Excel", "🔍 إدخال رقم ناخب"]
-)
+# تحميل الملفات من مجلد data
+DATA_FOLDER = "data"
+files = [f for f in os.listdir(DATA_FOLDER) if f.endswith(".xlsx")]
 
-def process_results(matches):
-    if not matches.empty:
-        # إعادة تسمية الأعمدة
-        matches = matches.rename(columns={
-            "VoterNo": "رقم الناخب",
-            "الاسم الثلاثي": "الاسم",
-            "الجنس": "الجنس",
-            "هاتف": "رقم الهاتف",
-            "رقم العائلة": "رقم العائلة",
-            "اسم مركز الاقتراع": "مركز الاقتراع",
-            "رقم مركز الاقتراع": "رقم مركز الاقتراع",
-            "رقم المحطة": "رقم المحطة"
-        })
+# اختيار طريقة البحث
+option = st.radio("اختر طريقة البحث:", ["🔼 رفع ملف Excel", "🔍 إدخال رقم ناخب"])
 
-        # تحويل الجنس 1=F, 0=M
-        matches["الجنس"] = matches["الجنس"].apply(lambda x: "F" if str(x) == "1" else "M")
+results = []
 
-        # إضافة أعمدة إضافية
-        matches["رقم المندوب الرئيسي"] = ""
-        matches["الحالة"] = 0
-        matches["ملاحظة"] = ""
+if option == "🔼 رفع ملف Excel":
+    uploaded_file = st.file_uploader("ارفع ملف Excel يحتوي على عمود VoterNo", type=["xlsx"])
+    if uploaded_file:
+        voters_df = pd.read_excel(uploaded_file, engine="openpyxl")
+        if "VoterNo" not in voters_df.columns and "رقم الناخب" not in voters_df.columns:
+            st.error("⚠️ الملف يجب أن يحتوي على عمود VoterNo أو رقم الناخب")
+        else:
+            voter_col = "VoterNo" if "VoterNo" in voters_df.columns else "رقم الناخب"
+            voters_list = voters_df[voter_col].astype(str).tolist()
 
-        # ترتيب الأعمدة
-        matches = matches[
-            ["رقم الناخب", "الاسم", "الجنس", "رقم الهاتف",
-             "رقم العائلة", "مركز الاقتراع", "رقم مركز الاقتراع",
-             "رقم المحطة", "رقم المندوب الرئيسي", "الحالة", "ملاحظة"]
-        ]
-    return matches
+elif option == "🔍 إدخال رقم ناخب":
+    voter_id = st.text_input("أدخل رقم الناخب:")
+    if st.button("بحث"):
+        if voter_id.strip() != "":
+            voters_list = [voter_id.strip()]
+        else:
+            st.warning("⚠️ يرجى إدخال رقم الناخب أولاً")
+            voters_list = []
+    else:
+        voters_list = []
 
-def search_voters(voters_list):
-    results = []
-    data_folder = "data"
-    files = [f for f in os.listdir(data_folder) if f.endswith(".xlsx")]
-
+# البحث وتنفيذ النتائج
+if "voters_list" in locals() and voters_list:
     for file in files:
-        file_path = os.path.join(data_folder, file)
         try:
-            df = pd.read_excel(file_path, engine="openpyxl")
-
+            df = pd.read_excel(os.path.join(DATA_FOLDER, file), engine="openpyxl")
             if "VoterNo" not in df.columns:
                 continue
 
@@ -61,76 +50,47 @@ def search_voters(voters_list):
             matches = df[df["VoterNo"].isin(voters_list)]
 
             if not matches.empty:
-                matches = process_results(matches)
+                matches = matches.rename(columns={
+                    "VoterNo": "رقم الناخب",
+                    "الاسم الثلاثي": "الاسم",
+                    "الجنس": "الجنس",
+                    "هاتف": "رقم الهاتف",
+                    "رقم العائلة": "رقم العائلة",
+                    "اسم مركز الاقتراع": "مركز الاقتراع",
+                    "رقم مركز الاقتراع": "رقم مركز الاقتراع",
+                    "رقم المحطة": "رقم المحطة"
+                })
+
+                matches["الجنس"] = matches["الجنس"].apply(lambda x: "F" if str(x) == "1" else "M")
+                matches["رقم المندوب الرئيسي"] = ""
+                matches["الحالة"] = 0
+                matches["ملاحظة"] = ""
+
+                matches = matches[
+                    ["رقم الناخب", "الاسم", "الجنس", "رقم الهاتف",
+                     "رقم العائلة", "مركز الاقتراع", "رقم مركز الاقتراع",
+                     "رقم المحطة", "رقم المندوب الرئيسي", "الحالة", "ملاحظة"]
+                ]
+
                 results.append(matches)
 
         except Exception as e:
-            st.error(f"خطأ في قراءة {file}: {str(e)}")
+            st.error(f"خطأ في الملف {file}: {e}")
 
     if results:
-        return pd.concat(results, ignore_index=True)
+        final_df = pd.concat(results, ignore_index=True)
+        st.success(f"✅ تم العثور على {len(final_df)} نتيجة")
+        st.dataframe(final_df, use_container_width=True)
+
+        # زر تحميل النتائج
+        buffer = BytesIO()
+        final_df.to_excel(buffer, index=False, engine="openpyxl")
+        buffer.seek(0)
+        st.download_button(
+            label="⬇️ تحميل النتائج",
+            data=buffer,
+            file_name="results.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
     else:
-        return pd.DataFrame()
-
-# ----------------- البحث برفع ملف -----------------
-if search_mode == "📂 رفع ملف Excel":
-    uploaded_file = st.file_uploader("📂 ارفع ملف Excel يحتوي على عمود VoterNo", type=["xlsx"])
-    if uploaded_file is not None:
-        df = pd.read_excel(uploaded_file, engine="openpyxl")
-        if "VoterNo" in df.columns or "رقم الناخب" in df.columns:
-            voter_col = "VoterNo" if "VoterNo" in df.columns else "رقم الناخب"
-            voters_list = df[voter_col].astype(str).tolist()
-
-            if st.button("بحث"):
-                results = search_voters(voters_list)
-                if not results.empty:
-                    st.success(f"✅ تم العثور على {len(results)} نتيجة")
-                    st.dataframe(results)
-
-                    # زر تحميل
-                    output = BytesIO()
-                    results.to_excel(output, index=False, engine="openpyxl")
-                    wb = load_workbook(output)
-                    ws = wb.active
-                    ws.sheet_view.rightToLeft = True
-                    output2 = BytesIO()
-                    wb.save(output2)
-
-                    st.download_button(
-                        label="⬇️ تحميل النتائج Excel",
-                        data=output2.getvalue(),
-                        file_name="نتائج_البحث.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                else:
-                    st.warning("⚠️ لم يتم العثور على نتائج.")
-
-# ----------------- البحث برقم ناخب -----------------
-elif search_mode == "🔍 إدخال رقم ناخب":
-    voter_no = st.text_input("📝 أدخل رقم الناخب:")
-    if st.button("بحث"):
-        if voter_no.strip() == "":
-            st.error("❌ يرجى إدخال رقم ناخب")
-        else:
-            results = search_voters([voter_no.strip()])
-            if not results.empty:
-                st.success(f"✅ تم العثور على {len(results)} نتيجة")
-                st.dataframe(results)
-
-                # زر تحميل
-                output = BytesIO()
-                results.to_excel(output, index=False, engine="openpyxl")
-                wb = load_workbook(output)
-                ws = wb.active
-                ws.sheet_view.rightToLeft = True
-                output2 = BytesIO()
-                wb.save(output2)
-
-                st.download_button(
-                    label="⬇️ تحميل النتائج Excel",
-                    data=output2.getvalue(),
-                    file_name="نتائج_البحث.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-            else:
-                st.warning("⚠️ لم يتم العثور على نتائج.")
+        st.info("ℹ️ لا يوجد نتائج مطابقة.")
