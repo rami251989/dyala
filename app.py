@@ -1,7 +1,12 @@
 import os
 import pandas as pd
 import streamlit as st
+import psycopg2
 from openpyxl import load_workbook
+from dotenv import load_dotenv
+
+# تحميل متغيرات البيئة من ملف .env
+load_dotenv()
 
 # إعداد الصفحة
 st.set_page_config(page_title="المراقب الذكي", layout="wide")
@@ -22,58 +27,64 @@ if uploaded_voter_file:
                 voter_col = "VoterNo" if "VoterNo" in voters_df.columns else "رقم الناخب"
                 voters_list = voters_df[voter_col].astype(str).tolist()
 
-                results = []
-                data_folder = "data"
-                files = [f for f in os.listdir(data_folder) if f.endswith(".xlsx")]
-                progress = st.progress(0)
+                # الاتصال بقاعدة البيانات PostgreSQL باستخدام متغيرات البيئة
+                conn = psycopg2.connect(
+                    dbname=os.environ.get("DB_NAME"),
+                    user=os.environ.get("DB_USER"),
+                    password=os.environ.get("DB_PASSWORD"),
+                    host=os.environ.get("DB_HOST"),
+                    port=os.environ.get("DB_PORT"),
+                    sslmode=os.environ.get("DB_SSLMODE")
+                )
 
-                for idx, file in enumerate(files, 1):
-                    file_path = os.path.join(data_folder, file)
-                    df = pd.read_excel(file_path, engine="openpyxl")
+                placeholders = ",".join(["%s"] * len(voters_list))
+                query = f"""
+                    SELECT 
+                        "VoterNo",
+                        "الاسم الثلاثي",
+                        "الجنس",
+                        "هاتف",
+                        "رقم العائلة",
+                        "اسم مركز الاقتراع",
+                        "رقم مركز الاقتراع",
+                        "رقم المحطة"
+                    FROM voters
+                    WHERE "VoterNo" IN ({placeholders})
+                """
 
-                    if "VoterNo" not in df.columns:
-                        st.warning(f"{file} → لا يحتوي على VoterNo")
-                        continue
+                df = pd.read_sql_query(query, conn, params=voters_list)
+                conn.close()
 
-                    df["VoterNo"] = df["VoterNo"].astype(str)
-                    matches = df[df["VoterNo"].isin(voters_list)]
+                if not df.empty:
+                    # إعادة تسمية الأعمدة
+                    df = df.rename(columns={
+                        "VoterNo": "رقم الناخب",
+                        "الاسم الثلاثي": "الاسم",
+                        "الجنس": "الجنس",
+                        "هاتف": "رقم الهاتف",
+                        "رقم العائلة": "رقم العائلة",
+                        "اسم مركز الاقتراع": "مركز الاقتراع",
+                        "رقم مركز الاقتراع": "رقم مركز الاقتراع",
+                        "رقم المحطة": "رقم المحطة"
+                    })
 
-                    if not matches.empty:
-                        matches = matches.rename(columns={
-                            "VoterNo": "رقم الناخب",
-                            "الاسم الثلاثي": "الاسم",
-                            "الجنس": "الجنس",
-                            "هاتف": "رقم الهاتف",
-                            "رقم العائلة": "رقم العائلة",
-                            "اسم مركز الاقتراع": "مركز الاقتراع",
-                            "رقم مركز الاقتراع": "رقم مركز الاقتراع",
-                            "رقم المحطة": "رقم المحطة"
-                        })
+                    # تعديل قيم الجنس
+                    df["الجنس"] = df["الجنس"].apply(lambda x: "F" if str(x) == "1" else "M")
 
-                        matches["الجنس"] = matches["الجنس"].apply(lambda x: "F" if str(x) == "1" else "M")
-                        matches["رقم المندوب الرئيسي"] = ""
-                        matches["الحالة"] = 0
-                        matches["ملاحظة"] = ""
+                    # إضافة أعمدة جديدة
+                    df["رقم المندوب الرئيسي"] = ""
+                    df["الحالة"] = 0
+                    df["ملاحظة"] = ""
 
-                        matches = matches[
-                            ["رقم الناخب", "الاسم", "الجنس", "رقم الهاتف",
-                             "رقم العائلة", "مركز الاقتراع", "رقم مركز الاقتراع",
-                             "رقم المحطة", "رقم المندوب الرئيسي", "الحالة", "ملاحظة"]
-                        ]
+                    df = df[
+                        ["رقم الناخب", "الاسم", "الجنس", "رقم الهاتف",
+                         "رقم العائلة", "مركز الاقتراع", "رقم مركز الاقتراع",
+                         "رقم المحطة", "رقم المندوب الرئيسي", "الحالة", "ملاحظة"]
+                    ]
 
-                        results.append(matches)
-                        st.success(f"{file} → تم إيجاد {len(matches)} نتيجة")
-                    else:
-                        st.info(f"{file} → لا يوجد نتائج")
-
-                    progress.progress(idx / len(files))
-
-                if results:
-                    final_df = pd.concat(results, ignore_index=True)
-
-                    # حفظ الملف مؤقتًا
+                    # حفظ النتائج
                     output_file = "نتائج_البحث.xlsx"
-                    final_df.to_excel(output_file, index=False, engine="openpyxl")
+                    df.to_excel(output_file, index=False, engine="openpyxl")
 
                     wb = load_workbook(output_file)
                     ws = wb.active
