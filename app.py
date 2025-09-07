@@ -13,13 +13,70 @@ st.set_page_config(page_title="المراقب الذكي", layout="wide")
 st.title("📊 المراقب الذكي - البحث في سجلات الناخبين")
 st.markdown("سيتم البحث في قواعد البيانات باستخدام الذكاء الاصطناعي 🤖")
 
-# رفع ملف الناخبين
-uploaded_voter_file = st.file_uploader("📂 ارفع ملف الناخبين (يحتوي على VoterNo أو رقم الناخب)", type=["xlsx"])
+# ✅ خيار البحث برقم ناخب
+st.subheader("🔍 البحث برقم الناخب")
+voter_input = st.text_input("ادخل رقم الناخب:")
+
+if st.button("بحث"):
+    if voter_input.strip() != "":
+        try:
+            conn = psycopg2.connect(
+                dbname=os.environ.get("DB_NAME"),
+                user=os.environ.get("DB_USER"),
+                password=os.environ.get("DB_PASSWORD"),
+                host=os.environ.get("DB_HOST"),
+                port=os.environ.get("DB_PORT"),
+                sslmode=os.environ.get("DB_SSLMODE")
+            )
+
+            query = """
+                SELECT 
+                    "VoterNo",
+                    "الاسم الثلاثي",
+                    "الجنس",
+                    "هاتف",
+                    "رقم العائلة",
+                    "اسم مركز الاقتراع",
+                    "رقم مركز الاقتراع",
+                    "رقم المحطة"
+                FROM voters
+                WHERE "VoterNo" = %s
+            """
+
+            df = pd.read_sql_query(query, conn, params=(voter_input.strip(),))
+            conn.close()
+
+            if not df.empty:
+                # تعديل الأعمدة
+                df = df.rename(columns={
+                    "VoterNo": "رقم الناخب",
+                    "الاسم الثلاثي": "الاسم",
+                    "الجنس": "الجنس",
+                    "هاتف": "رقم الهاتف",
+                    "رقم العائلة": "رقم العائلة",
+                    "اسم مركز الاقتراع": "مركز الاقتراع",
+                    "رقم مركز الاقتراع": "رقم مركز الاقتراع",
+                    "رقم المحطة": "رقم المحطة"
+                })
+
+                df["الجنس"] = df["الجنس"].apply(lambda x: "F" if str(x) == "1" else "M")
+
+                st.dataframe(df)  # 👈 عرض النتائج بجدول بسيط
+            else:
+                st.warning("⚠️ لم يتم العثور على نتائج لهذا الرقم")
+
+        except Exception as e:
+            st.error(f"❌ خطأ: {e}")
+    else:
+        st.warning("⚠️ الرجاء إدخال رقم الناخب")
+
+# ✅ خيار رفع ملف Excel (كما هو)
+st.subheader("📂 البحث باستخدام ملف Excel")
+uploaded_voter_file = st.file_uploader("ارفع ملف الناخبين (يحتوي على VoterNo أو رقم الناخب)", type=["xlsx"])
 
 if uploaded_voter_file:
     if st.button("🚀 تشغيل البحث"):
         try:
-            # قراءة ملف الناخبين
             voters_df = pd.read_excel(uploaded_voter_file, engine="openpyxl")
             if "VoterNo" not in voters_df.columns and "رقم الناخب" not in voters_df.columns:
                 st.error("❌ ملف الناخبين يجب أن يحتوي على عمود VoterNo أو رقم الناخب")
@@ -27,7 +84,6 @@ if uploaded_voter_file:
                 voter_col = "VoterNo" if "VoterNo" in voters_df.columns else "رقم الناخب"
                 voters_list = voters_df[voter_col].astype(str).tolist()
 
-                # الاتصال بقاعدة البيانات PostgreSQL باستخدام متغيرات البيئة
                 conn = psycopg2.connect(
                     dbname=os.environ.get("DB_NAME"),
                     user=os.environ.get("DB_USER"),
@@ -56,7 +112,6 @@ if uploaded_voter_file:
                 conn.close()
 
                 if not df.empty:
-                    # إعادة تسمية الأعمدة
                     df = df.rename(columns={
                         "VoterNo": "رقم الناخب",
                         "الاسم الثلاثي": "الاسم",
@@ -68,10 +123,8 @@ if uploaded_voter_file:
                         "رقم المحطة": "رقم المحطة"
                     })
 
-                    # تعديل قيم الجنس
                     df["الجنس"] = df["الجنس"].apply(lambda x: "F" if str(x) == "1" else "M")
 
-                    # إضافة أعمدة جديدة
                     df["رقم المندوب الرئيسي"] = ""
                     df["الحالة"] = 0
                     df["ملاحظة"] = ""
@@ -82,7 +135,6 @@ if uploaded_voter_file:
                          "رقم المحطة", "رقم المندوب الرئيسي", "الحالة", "ملاحظة"]
                     ]
 
-                    # حفظ النتائج
                     output_file = "نتائج_البحث.xlsx"
                     df.to_excel(output_file, index=False, engine="openpyxl")
 
