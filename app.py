@@ -2,59 +2,104 @@ import os
 import pandas as pd
 import streamlit as st
 import psycopg2
+from openpyxl import load_workbook
 from dotenv import load_dotenv
 
-# تحميل متغيرات البيئة
+# تحميل متغيرات البيئة من ملف .env
 load_dotenv()
 
-DB_HOST = os.getenv("DB_HOST")
-DB_NAME = os.getenv("DB_NAME")
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_PORT = os.getenv("DB_PORT", "5432")
-
-
-# الاتصال بقاعدة البيانات
-def get_connection():
-    return psycopg2.connect(
-        host=DB_HOST,
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        port=DB_PORT
-    )
-
-
-# البحث عن ناخبين باستخدام أرقام من ملف Excel
-def search_voters(voter_numbers):
-    conn = get_connection()
-    query = 'SELECT * FROM voters WHERE "VoterNo" = ANY(%s);'
-    df = pd.read_sql(query, conn, params=(voter_numbers,))
-    conn.close()
-    return df
-
-
-# إعداد واجهة Streamlit
+# إعداد الصفحة
 st.set_page_config(page_title="المراقب الذكي", layout="wide")
+st.title("📊 المراقب الذكي - البحث في سجلات الناخبين")
+st.markdown("سيتم البحث في قواعد البيانات باستخدام الذكاء الاصطناعي 🤖")
 
-st.title("🗳️ المراقب الذكي - البحث عن الناخبين")
-st.markdown("ابحث باستخدام ملف Excel يحتوي على أرقام الناخبين.")
+# رفع ملف الناخبين
+uploaded_voter_file = st.file_uploader("📂 ارفع ملف الناخبين (يحتوي على VoterNo أو رقم الناخب)", type=["xlsx"])
 
-# رفع ملف Excel
-uploaded_voter_file = st.file_uploader("📂 ارفع ملف Excel فيه أرقام الناخبين", type=["xlsx"])
-
-if uploaded_voter_file is not None:
-    try:
-        voters_df = pd.read_excel(uploaded_voter_file, engine="openpyxl")
-        if "VoterNo" not in voters_df.columns:
-            st.error("⚠️ ملف Excel لازم يحتوي على عمود باسم 'VoterNo'")
-        else:
-            voters_list = voters_df["VoterNo"].astype(str).tolist()
-            result = search_voters(voters_list)
-            if result.empty:
-                st.warning("⚠️ ما في نتائج للأرقام المرفوعة.")
+if uploaded_voter_file:
+    if st.button("🚀 تشغيل البحث"):
+        try:
+            # قراءة ملف الناخبين
+            voters_df = pd.read_excel(uploaded_voter_file, engine="openpyxl")
+            if "VoterNo" not in voters_df.columns and "رقم الناخب" not in voters_df.columns:
+                st.error("❌ ملف الناخبين يجب أن يحتوي على عمود VoterNo أو رقم الناخب")
             else:
-                st.success("✅ تم العثور على الناخبين:")
-                st.dataframe(result)
-    except Exception as e:
-        st.error(f"File error: {e}")
+                voter_col = "VoterNo" if "VoterNo" in voters_df.columns else "رقم الناخب"
+                voters_list = voters_df[voter_col].astype(str).tolist()
+
+                # الاتصال بقاعدة البيانات PostgreSQL باستخدام متغيرات البيئة
+                conn = psycopg2.connect(
+                    dbname=os.environ.get("DB_NAME"),
+                    user=os.environ.get("DB_USER"),
+                    password=os.environ.get("DB_PASSWORD"),
+                    host=os.environ.get("DB_HOST"),
+                    port=os.environ.get("DB_PORT"),
+                    sslmode=os.environ.get("DB_SSLMODE")
+                )
+
+                placeholders = ",".join(["%s"] * len(voters_list))
+                query = f"""
+                    SELECT 
+                        "VoterNo",
+                        "الاسم الثلاثي",
+                        "الجنس",
+                        "هاتف",
+                        "رقم العائلة",
+                        "اسم مركز الاقتراع",
+                        "رقم مركز الاقتراع",
+                        "رقم المحطة"
+                    FROM voters
+                    WHERE "VoterNo" IN ({placeholders})
+                """
+
+                df = pd.read_sql_query(query, conn, params=voters_list)
+                conn.close()
+
+                if not df.empty:
+                    # إعادة تسمية الأعمدة
+                    df = df.rename(columns={
+                        "VoterNo": "رقم الناخب",
+                        "الاسم الثلاثي": "الاسم",
+                        "الجنس": "الجنس",
+                        "هاتف": "رقم الهاتف",
+                        "رقم العائلة": "رقم العائلة",
+                        "اسم مركز الاقتراع": "مركز الاقتراع",
+                        "رقم مركز الاقتراع": "رقم مركز الاقتراع",
+                        "رقم المحطة": "رقم المحطة"
+                    })
+
+                    # تعديل قيم الجنس
+                    df["الجنس"] = df["الجنس"].apply(lambda x: "F" if str(x) == "1" else "M")
+
+                    # إضافة أعمدة جديدة
+                    df["رقم المندوب الرئيسي"] = ""
+                    df["الحالة"] = 0
+                    df["ملاحظة"] = ""
+
+                    df = df[
+                        ["رقم الناخب", "الاسم", "الجنس", "رقم الهاتف",
+                         "رقم العائلة", "مركز الاقتراع", "رقم مركز الاقتراع",
+                         "رقم المحطة", "رقم المندوب الرئيسي", "الحالة", "ملاحظة"]
+                    ]
+
+                    # حفظ النتائج
+                    output_file = "نتائج_البحث.xlsx"
+                    df.to_excel(output_file, index=False, engine="openpyxl")
+
+                    wb = load_workbook(output_file)
+                    ws = wb.active
+                    ws.sheet_view.rightToLeft = True
+                    wb.save(output_file)
+
+                    with open(output_file, "rb") as f:
+                        st.download_button(
+                            "⬇️ تحميل النتائج",
+                            f,
+                            file_name="نتائج_البحث.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                else:
+                    st.warning("⚠️ لم يتم العثور على نتائج")
+
+        except Exception as e:
+            st.error(f"❌ خطأ: {e}")
