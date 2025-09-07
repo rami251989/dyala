@@ -5,7 +5,7 @@ import psycopg2
 from openpyxl import load_workbook
 from dotenv import load_dotenv
 
-# تحميل متغيرات البيئة من ملف .env
+# تحميل متغيرات البيئة
 load_dotenv()
 
 # بيانات الدخول
@@ -14,6 +14,61 @@ PASSWORD = "Moraqip@123"
 
 # إعداد الصفحة
 st.set_page_config(page_title="المراقب الذكي", layout="wide")
+
+# 🎨 CSS مخصص
+st.markdown("""
+    <style>
+        /* خلفية خفيفة */
+        .stApp {
+            background-color: #f5f7fa;
+        }
+
+        /* العناوين */
+        h1, h2, h3 {
+            color: #2c3e50;
+            font-family: 'Segoe UI', sans-serif;
+        }
+
+        /* أزرار */
+        div.stButton > button {
+            background-color: #3498db;
+            color: white;
+            border-radius: 10px;
+            padding: 0.6em 1.2em;
+            font-size: 16px;
+            font-weight: bold;
+            border: none;
+        }
+        div.stButton > button:hover {
+            background-color: #2980b9;
+            color: white;
+        }
+
+        /* مربعات الإدخال */
+        .stTextInput>div>div>input {
+            border-radius: 8px;
+            border: 1px solid #ccc;
+            padding: 8px;
+        }
+
+        /* Dataframe */
+        .dataframe {
+            border: 2px solid #3498db !important;
+            border-radius: 8px !important;
+        }
+
+        /* رسائل التنبيه */
+        .stSuccess {
+            background-color: #eafaf1;
+        }
+        .stWarning {
+            background-color: #fff4e5;
+        }
+        .stError {
+            background-color: #fdecea;
+        }
+    </style>
+""", unsafe_allow_html=True)
 
 # دالة تسجيل الدخول
 def login():
@@ -32,9 +87,8 @@ if "logged_in" not in st.session_state or not st.session_state["logged_in"]:
     login()
 else:
     # ========================== التطبيق ==========================
-
     st.title("📊 المراقب الذكي - البحث في سجلات الناخبين")
-    st.markdown("سيتم البحث في قواعد البيانات باستخدام الذكاء الاصطناعي 🤖")
+    st.markdown("### سيتم البحث في قواعد البيانات باستخدام الذكاء الاصطناعي 🤖")
 
     # ✅ خيار البحث برقم ناخب
     st.subheader("🔍 البحث برقم الناخب")
@@ -84,7 +138,7 @@ else:
 
                     df["الجنس"] = df["الجنس"].apply(lambda x: "F" if str(x) == "1" else "M")
 
-                    st.dataframe(df)  # 👈 عرض النتائج بجدول بسيط
+                    st.dataframe(df, use_container_width=True)  # 👈 عرض النتائج بجدول أنيق
                 else:
                     st.warning("⚠️ لم يتم العثور على نتائج لهذا الرقم")
 
