@@ -27,7 +27,11 @@ def get_conn():
 
 # ---- دالة تحويل الجنس ----
 def map_gender(x):
-    return "F" if str(x).strip() == "1" else "M"
+    try:
+        val = int(float(x))
+        return "F" if val == 1 else "M"
+    except:
+        return "M"
 
 # ---- تسجيل الدخول ----
 def login():
@@ -147,6 +151,8 @@ with tab_browse:
                 "رقم المحطة": "رقم المحطة",
             })
             df["الجنس"] = df["الجنس"].apply(map_gender)
+
+        st.write(df.head(10))  # Debug preview
 
         total_pages = max(1, math.ceil(total_rows / page_size))
 
@@ -291,6 +297,8 @@ with tab_file:
                             "رقم المحطة": "رقم المحطة"
                         })
                         df["الجنس"] = df["الجنس"].apply(map_gender)
+
+                        st.write(df.head(10))  # Debug preview
 
                         df["رقم المندوب الرئيسي"] = ""
                         df["الحالة"] = 0
