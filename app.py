@@ -7,6 +7,7 @@ from openpyxl import load_workbook
 from dotenv import load_dotenv
 from google.cloud import vision
 import re
+import base64
 
 # ---- الإعدادات العامة / البيئة ----
 load_dotenv()
@@ -15,6 +16,19 @@ USERNAME = "admin"
 PASSWORD = "Moraqip@123"
 
 st.set_page_config(page_title="المراقب الذكي", layout="wide")
+
+# ---- إعداد Google Vision من secrets ----
+def setup_google_vision():
+    try:
+        key_b64 = st.secrets["GOOGLE_VISION_KEY_B64"]
+        key_bytes = base64.b64decode(key_b64)
+        with open("google_vision.json", "wb") as f:
+            f.write(key_bytes)
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "google_vision.json"
+        return vision.ImageAnnotatorClient()
+    except Exception as e:
+        st.error(f"❌ لم يتم تحميل مفتاح Google Vision بشكل صحيح: {e}")
+        return None
 
 # ---- اتصال قاعدة البيانات ----
 def get_conn():
@@ -63,9 +77,9 @@ tab_browse, tab_single, tab_file, tab_ocr = st.tabs(
     ["📄 تصفّح السجلات (Pagination)", "🔍 بحث برقم", "📂 رفع ملف Excel", "📸 رفع صور بطاقات"]
 )
 
-# ----------------------------------------------------------------------------- 
+# -----------------------------------------------------------------------------
 # 1) 📄 تصفّح السجلات
-# ----------------------------------------------------------------------------- 
+# -----------------------------------------------------------------------------
 with tab_browse:
     st.subheader("📄 تصفّح السجلات مع فلاتر")
     if "page" not in st.session_state:
@@ -155,15 +169,14 @@ with tab_browse:
             df["الجنس"] = df["الجنس"].apply(map_gender)
 
         total_pages = max(1, math.ceil(total_rows / page_size))
-
         st.dataframe(df, use_container_width=True, height=500)
 
     except Exception as e:
         st.error(f"❌ خطأ أثناء التصفح: {e}")
 
-# ----------------------------------------------------------------------------- 
+# -----------------------------------------------------------------------------
 # 2) 🔍 البحث برقم واحد
-# ----------------------------------------------------------------------------- 
+# -----------------------------------------------------------------------------
 with tab_single:
     st.subheader("🔍 البحث برقم الناخب")
     voter_input = st.text_input("ادخل رقم الناخب:")
@@ -207,9 +220,9 @@ with tab_single:
         else:
             st.warning("⚠️ الرجاء إدخال رقم الناخب")
 
-# ----------------------------------------------------------------------------- 
+# -----------------------------------------------------------------------------
 # 3) 📂 رفع ملف Excel
-# ----------------------------------------------------------------------------- 
+# -----------------------------------------------------------------------------
 with tab_file:
     st.subheader("📂 البحث باستخدام ملف Excel")
     uploaded_voter_file = st.file_uploader("ارفع ملف الناخبين (يحتوي على VoterNo أو رقم الناخب)", type=["xlsx"])
@@ -260,9 +273,9 @@ with tab_file:
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
 
-# ----------------------------------------------------------------------------- 
+# -----------------------------------------------------------------------------
 # 4) 📸 رفع صور بطاقات الناخبين (Google Vision OCR)
-# ----------------------------------------------------------------------------- 
+# -----------------------------------------------------------------------------
 with tab_ocr:
     st.subheader("📸 رفع صور بطاقات الناخبين")
     uploaded_images = st.file_uploader(
@@ -271,10 +284,9 @@ with tab_ocr:
 
     if uploaded_images and st.button("🚀 استخراج الأرقام والبحث"):
         try:
-            with open("google_vision.json", "w") as f:
-                f.write(st.secrets["GOOGLE_VISION_KEY"])
-            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "google_vision.json"
-            client = vision.ImageAnnotatorClient()
+            client = setup_google_vision()
+            if not client:
+                st.stop()
 
             all_voters = []
 
