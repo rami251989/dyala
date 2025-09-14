@@ -25,6 +25,15 @@ def get_conn():
         sslmode=os.environ.get("DB_SSLMODE", "require")
     )
 
+# ---- دالة تحويل الجنس ----
+def map_gender(x):
+    x = str(x).strip()
+    if x in ["1", "ذكر", "M", "m"]:
+        return "M"
+    elif x in ["2", "انثى", "أنثى", "F", "f"]:
+        return "F"
+    return x  # fallback لو في قيمة غير متوقعة
+
 # ---- تسجيل الدخول ----
 def login():
     st.markdown("## 🔑 تسجيل الدخول")
@@ -56,7 +65,6 @@ tab_browse, tab_single, tab_file = st.tabs(["📄 تصفّح السجلات (Pag
 # -----------------------------------------------------------------------------
 with tab_browse:
     st.subheader("📄 تصفّح السجلات مع فلاتر")
-    # حالة الصفحة والفلاتر في session_state حتى ما تُصفّر عند كل ضغط
     if "page" not in st.session_state:
         st.session_state.page = 1
     if "filters" not in st.session_state:
@@ -89,11 +97,8 @@ with tab_browse:
         voter_filter = name_filter = center_filter = ""
         st.session_state.page = 1
 
-    # بناء WHERE ديناميكي
     where_clauses = []
     params = []
-
-    # ملاحظة: الأعمدة بين "" لاحترام حالة الأحرف في Postgres
     if st.session_state.filters["voter"]:
         where_clauses.append('CAST("VoterNo" AS TEXT) ILIKE %s')
         params.append(f"%{st.session_state.filters['voter']}%")
@@ -106,10 +111,7 @@ with tab_browse:
 
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
-    # حساب العدد الكلي
     count_sql = f'SELECT COUNT(*) FROM voters {where_sql};'
-
-    # جلب صفحة بيانات
     offset = (st.session_state.page - 1) * page_size
     data_sql = f'''
         SELECT
@@ -129,16 +131,13 @@ with tab_browse:
 
     try:
         conn = get_conn()
-        # count
         with conn.cursor() as cur:
             cur.execute(count_sql, params)
             total_rows = cur.fetchone()[0]
 
-        # data
         df = pd.read_sql_query(data_sql, conn, params=params + [page_size, offset])
         conn.close()
 
-        # تنسيق الأعمدة
         if not df.empty:
             df = df.rename(columns={
                 "VoterNo": "رقم الناخب",
@@ -150,8 +149,7 @@ with tab_browse:
                 "رقم مركز الاقتراع": "رقم مركز الاقتراع",
                 "رقم المحطة": "رقم المحطة",
             })
-            # تحويل الجنس
-            df["الجنس"] = df["الجنس"].apply(lambda x: "F" if str(x) == "1" else "M")
+            df["الجنس"] = df["الجنس"].apply(map_gender)
 
         total_pages = max(1, math.ceil(total_rows / page_size))
 
@@ -179,7 +177,6 @@ with tab_browse:
 
         st.dataframe(df, use_container_width=True, height=500)
 
-        # تصدير الصفحة الحالية
         exp_col1, exp_col2 = st.columns([1,1])
         with exp_col1:
             st.download_button(
@@ -190,7 +187,6 @@ with tab_browse:
                 use_container_width=True
             )
         with exp_col2:
-            # Excel export للصفحة الحالية
             tmp_xlsx = f"voters_page_{st.session_state.page}.xlsx"
             df.to_excel(tmp_xlsx, index=False, engine="openpyxl")
             with open(tmp_xlsx, "rb") as f:
@@ -206,7 +202,7 @@ with tab_browse:
         st.error(f"❌ خطأ أثناء التصفح: {e}")
 
 # -----------------------------------------------------------------------------
-# 2) 🔍 البحث برقم واحد (نفس منطقك)
+# 2) 🔍 البحث برقم واحد
 # -----------------------------------------------------------------------------
 with tab_single:
     st.subheader("🔍 البحث برقم الناخب")
@@ -242,7 +238,7 @@ with tab_single:
                         "رقم مركز الاقتراع": "رقم مركز الاقتراع",
                         "رقم المحطة": "رقم المحطة"
                     })
-                    df["الجنس"] = df["الجنس"].apply(lambda x: "F" if str(x) == "1" else "M")
+                    df["الجنس"] = df["الجنس"].apply(map_gender)
                     st.dataframe(df, use_container_width=True)
                 else:
                     st.warning("⚠️ لم يتم العثور على نتائج لهذا الرقم")
@@ -252,7 +248,7 @@ with tab_single:
             st.warning("⚠️ الرجاء إدخال رقم الناخب")
 
 # -----------------------------------------------------------------------------
-# 3) 📂 رفع ملف Excel (نفس منطقك)
+# 3) 📂 رفع ملف Excel
 # -----------------------------------------------------------------------------
 with tab_file:
     st.subheader("📂 البحث باستخدام ملف Excel")
@@ -297,7 +293,7 @@ with tab_file:
                             "رقم مركز الاقتراع": "رقم مركز الاقتراع",
                             "رقم المحطة": "رقم المحطة"
                         })
-                        df["الجنس"] = df["الجنس"].apply(lambda x: "F" if str(x) == "1" else "M")
+                        df["الجنس"] = df["الجنس"].apply(map_gender)
 
                         df["رقم المندوب الرئيسي"] = ""
                         df["الحالة"] = 0
