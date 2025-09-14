@@ -81,57 +81,42 @@ tab_browse, tab_single, tab_file, tab_ocr = st.tabs(
 # 1) 📄 تصفّح السجلات
 # ----------------------------------------------------------------------------- #
 with tab_browse:
-    st.subheader("📄 تصفّح السجلات مع فلاتر متقدمة")
+    st.subheader("📄 تصفّح السجلات مع فلاتر")
 
     if "page" not in st.session_state:
         st.session_state.page = 1
+    if "filters" not in st.session_state:
+        st.session_state.filters = {"voter": "", "name": "", "center": ""}
 
-    # --- جلب القيم المميزة للفلاتر من قاعدة البيانات ---
-    try:
-        conn = get_conn()
-        distinct_centers = pd.read_sql_query('SELECT DISTINCT "اسم مركز الاقتراع" FROM voters;', conn)["اسم مركز الاقتراع"].dropna().tolist()
-        distinct_families = pd.read_sql_query('SELECT DISTINCT "رقم العائلة" FROM voters;', conn)["رقم العائلة"].dropna().tolist()
-        conn.close()
-    except:
-        distinct_centers, distinct_families = [], []
-
-    # --- واجهة الفلاتر ---
-    colf1, colf2, colf3 = st.columns(3)
+    colf1, colf2, colf3, colf4 = st.columns([1,1,1,1])
     with colf1:
-        voter_filter = st.text_input("🔢 رقم الناخب:")
+        voter_filter = st.text_input("🔢 رقم الناخب:", value=st.session_state.filters["voter"])
     with colf2:
-        name_filter = st.text_input("🧑‍💼 الاسم يحتوي على:")
+        name_filter = st.text_input("🧑‍💼 الاسم:", value=st.session_state.filters["name"])
     with colf3:
-        gender_filter = st.selectbox("⚧ الجنس", ["", "M", "F"])
-
-    colf4, colf5 = st.columns(2)
+        center_filter = st.text_input("🏫 مركز الاقتراع:", value=st.session_state.filters["center"])
     with colf4:
-        center_filter = st.selectbox("🏫 مركز الاقتراع:", [""] + distinct_centers)
-    with colf5:
-        family_filter = st.selectbox("👨‍👩‍👦 رقم العائلة:", [""] + distinct_families)
-
-    page_size = st.selectbox("عدد الصفوف", [10, 20, 50, 100], index=1)
+        page_size = st.selectbox("عدد الصفوف", [10, 20, 50, 100], index=1)
 
     if st.button("🔎 تطبيق الفلاتر"):
+        st.session_state.filters = {
+            "voter": voter_filter.strip(),
+            "name": name_filter.strip(),
+            "center": center_filter.strip(),
+        }
         st.session_state.page = 1
 
     # --- بناء شروط البحث ---
     where_clauses, params = [], []
-    if voter_filter:
+    if st.session_state.filters["voter"]:
         where_clauses.append('CAST("VoterNo" AS TEXT) ILIKE %s')
-        params.append(f"%{voter_filter}%")
-    if name_filter:
+        params.append(f"%{st.session_state.filters['voter']}%")
+    if st.session_state.filters["name"]:
         where_clauses.append('"الاسم الثلاثي" ILIKE %s')
-        params.append(f"%{name_filter}%")
-    if center_filter:
-        where_clauses.append('"اسم مركز الاقتراع" = %s')
-        params.append(center_filter)
-    if family_filter:
-        where_clauses.append('"رقم العائلة" = %s')
-        params.append(family_filter)
-    if gender_filter:
-        where_clauses.append('"الجنس" = %s')
-        params.append("1" if gender_filter == "F" else "0")
+        params.append(f"%{st.session_state.filters['name']}%")
+    if st.session_state.filters["center"]:
+        where_clauses.append('"اسم مركز الاقتراع" ILIKE %s')
+        params.append(f"%{st.session_state.filters['center']}%")
 
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
