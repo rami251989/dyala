@@ -267,7 +267,45 @@ with tab_file:
                             "رقم المحطة": "رقم المحطة"
                         })
                         df["الجنس"] = df["الجنس"].apply(map_gender)
+
+                        # ✅ إضافة الأعمدة الإضافية
+                        df["رقم المندوب الرئيسي"] = ""
+                        df["الحالة"] = 0
+                        df["ملاحظة"] = ""
+
+                        # ✅ إعادة ترتيب الأعمدة
+                        df = df[
+                            ["رقم الناخب", "الاسم", "الجنس", "رقم الهاتف",
+                             "رقم العائلة", "مركز الاقتراع", "رقم مركز الاقتراع",
+                             "رقم المحطة", "رقم المندوب الرئيسي", "الحالة", "ملاحظة"]
+                        ]
+
                         st.dataframe(df, use_container_width=True, height=500)
+
+                        # 🔽 زر تنزيل النتائج CSV
+                        csv = df.to_csv(index=False).encode("utf-8-sig")
+                        st.download_button(
+                            label="⬇️ تنزيل النتائج CSV",
+                            data=csv,
+                            file_name="voters_results.csv",
+                            mime="text/csv"
+                        )
+
+                        # 🔽 زر تنزيل النتائج Excel
+                        output_file = "voters_results.xlsx"
+                        df.to_excel(output_file, index=False, engine="openpyxl")
+                        wb = load_workbook(output_file)
+                        ws = wb.active
+                        ws.sheet_view.rightToLeft = True
+                        wb.save(output_file)
+                        with open(output_file, "rb") as f:
+                            st.download_button(
+                                "⬇️ تنزيل النتائج Excel",
+                                f,
+                                file_name="voters_results.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            )
+
                     else:
                         st.warning("⚠️ لم يتم العثور على نتائج")
             except Exception as e:
@@ -337,7 +375,45 @@ with tab_ocr:
                         "رقم المحطة": "رقم المحطة"
                     })
                     df["الجنس"] = df["الجنس"].apply(map_gender)
+
+                    # ✅ إضافة الأعمدة الإضافية
+                    df["رقم المندوب الرئيسي"] = ""
+                    df["الحالة"] = 0
+                    df["ملاحظة"] = ""
+
+                    # ✅ إعادة ترتيب الأعمدة
+                    df = df[
+                        ["رقم الناخب", "الاسم", "الجنس", "رقم الهاتف",
+                         "رقم العائلة", "مركز الاقتراع", "رقم مركز الاقتراع",
+                         "رقم المحطة", "رقم المندوب الرئيسي", "الحالة", "ملاحظة"]
+                    ]
+
                     st.dataframe(df, use_container_width=True, height=500)
+
+                    # 🔽 زر تنزيل النتائج CSV
+                    csv = df.to_csv(index=False).encode("utf-8-sig")
+                    st.download_button(
+                        label="⬇️ تنزيل النتائج CSV",
+                        data=csv,
+                        file_name="ocr_voters_results.csv",
+                        mime="text/csv"
+                    )
+
+                    # 🔽 زر تنزيل النتائج Excel
+                    output_file = "ocr_voters_results.xlsx"
+                    df.to_excel(output_file, index=False, engine="openpyxl")
+                    wb = load_workbook(output_file)
+                    ws = wb.active
+                    ws.sheet_view.rightToLeft = True
+                    wb.save(output_file)
+                    with open(output_file, "rb") as f:
+                        st.download_button(
+                            "⬇️ تنزيل النتائج Excel",
+                            f,
+                            file_name="ocr_voters_results.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+
                 else:
                     st.warning("⚠️ لم يتم العثور على الناخبين في قاعدة البيانات")
         except Exception as e:
