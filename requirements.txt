@@ -1,5 +1,7 @@
 streamlit
 pandas
-openpyxl
 psycopg2-binary
+openpyxl
 python-dotenv
+google-cloud-vision
+google-auth
