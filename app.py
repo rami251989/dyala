@@ -175,6 +175,28 @@ with tab_browse:
 
         st.dataframe(df, use_container_width=True, height=500)
 
+        # تصدير الصفحة الحالية
+        exp_col1, exp_col2 = st.columns([1,1])
+        with exp_col1:
+            st.download_button(
+                "⬇️ تحميل الصفحة (CSV)",
+                df.to_csv(index=False).encode("utf-8-sig"),
+                file_name=f"voters_page_{st.session_state.page}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        with exp_col2:
+            tmp_xlsx = f"voters_page_{st.session_state.page}.xlsx"
+            df.to_excel(tmp_xlsx, index=False, engine="openpyxl")
+            with open(tmp_xlsx, "rb") as f:
+                st.download_button(
+                    "⬇️ تحميل الصفحة (Excel)",
+                    f,
+                    file_name=tmp_xlsx,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+
     except Exception as e:
         st.error(f"❌ خطأ أثناء التصفح: {e}")
 
