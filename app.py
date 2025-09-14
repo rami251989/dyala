@@ -51,12 +51,20 @@ st.markdown("سيتم البحث في قواعد البيانات باستخدا
 # ====== تبويبات: تصفح كل الداتابيس (Pagination) | بحث برقم | رفع ملف ======
 tab_browse, tab_single, tab_file = st.tabs(["📄 تصفّح السجلات (Pagination)", "🔍 بحث برقم", "📂 رفع ملف Excel"])
 
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# خيار عرض الجنس (M/F أو ذكر/أنثى)
+gender_display = st.radio("طريقة عرض الجنس:", ["M/F", "ذكر/أنثى"], horizontal=True)
+
+def format_gender(df):
+    if gender_display == "ذكر/أنثى":
+        df["الجنس"] = df["الجنس"].map({"M": "ذكر", "F": "أنثى"})
+    return df
+
+# ---------------------------------------------------------------------------
 # 1) 📄 تصفّح السجلات مع Pagination + فلاتر
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 with tab_browse:
     st.subheader("📄 تصفّح السجلات مع فلاتر")
-    # حالة الصفحة والفلاتر في session_state حتى ما تُصفّر عند كل ضغط
     if "page" not in st.session_state:
         st.session_state.page = 1
     if "filters" not in st.session_state:
@@ -89,11 +97,9 @@ with tab_browse:
         voter_filter = name_filter = center_filter = ""
         st.session_state.page = 1
 
-    # بناء WHERE ديناميكي
     where_clauses = []
     params = []
 
-    # ملاحظة: الأعمدة بين "" لاحترام حالة الأحرف في Postgres
     if st.session_state.filters["voter"]:
         where_clauses.append('CAST("VoterNo" AS TEXT) ILIKE %s')
         params.append(f"%{st.session_state.filters['voter']}%")
@@ -105,11 +111,7 @@ with tab_browse:
         params.append(f"%{st.session_state.filters['center']}%")
 
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-
-    # حساب العدد الكلي
     count_sql = f'SELECT COUNT(*) FROM voters {where_sql};'
-
-    # جلب صفحة بيانات
     offset = (st.session_state.page - 1) * page_size
     data_sql = f'''
         SELECT
@@ -129,16 +131,13 @@ with tab_browse:
 
     try:
         conn = get_conn()
-        # count
         with conn.cursor() as cur:
             cur.execute(count_sql, params)
             total_rows = cur.fetchone()[0]
 
-        # data
         df = pd.read_sql_query(data_sql, conn, params=params + [page_size, offset])
         conn.close()
 
-        # تنسيق الأعمدة
         if not df.empty:
             df = df.rename(columns={
                 "VoterNo": "رقم الناخب",
@@ -150,8 +149,7 @@ with tab_browse:
                 "رقم مركز الاقتراع": "رقم مركز الاقتراع",
                 "رقم المحطة": "رقم المحطة",
             })
-            # تحويل الجنس
-            df["الجنس"] = df["الجنس"].apply(lambda x: "F" if str(x) == "1" else "M")
+            df = format_gender(df)
 
         total_pages = max(1, math.ceil(total_rows / page_size))
 
@@ -168,10 +166,10 @@ with tab_browse:
             go = st.button("اذهب 🚀", use_container_width=True)
 
         if prev:
-            st.session_state.page = max(1, st.session_state.page - 1)
+            st.session_state.page -= 1
             st.experimental_rerun()
         if next_:
-            st.session_state.page = min(total_pages, st.session_state.page + 1)
+            st.session_state.page += 1
             st.experimental_rerun()
         if go and jump != st.session_state.page:
             st.session_state.page = int(jump)
@@ -179,35 +177,12 @@ with tab_browse:
 
         st.dataframe(df, use_container_width=True, height=500)
 
-        # تصدير الصفحة الحالية
-        exp_col1, exp_col2 = st.columns([1,1])
-        with exp_col1:
-            st.download_button(
-                "⬇️ تحميل الصفحة (CSV)",
-                df.to_csv(index=False).encode("utf-8-sig"),
-                file_name=f"voters_page_{st.session_state.page}.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
-        with exp_col2:
-            # Excel export للصفحة الحالية
-            tmp_xlsx = f"voters_page_{st.session_state.page}.xlsx"
-            df.to_excel(tmp_xlsx, index=False, engine="openpyxl")
-            with open(tmp_xlsx, "rb") as f:
-                st.download_button(
-                    "⬇️ تحميل الصفحة (Excel)",
-                    f,
-                    file_name=tmp_xlsx,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
-                )
-
     except Exception as e:
         st.error(f"❌ خطأ أثناء التصفح: {e}")
 
-# -----------------------------------------------------------------------------
-# 2) 🔍 البحث برقم واحد (نفس منطقك)
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 2) 🔍 البحث برقم واحد
+# ---------------------------------------------------------------------------
 with tab_single:
     st.subheader("🔍 البحث برقم الناخب")
     voter_input = st.text_input("ادخل رقم الناخب:")
@@ -242,7 +217,7 @@ with tab_single:
                         "رقم مركز الاقتراع": "رقم مركز الاقتراع",
                         "رقم المحطة": "رقم المحطة"
                     })
-                    df["الجنس"] = df["الجنس"].apply(lambda x: "F" if str(x) == "1" else "M")
+                    df = format_gender(df)
                     st.dataframe(df, use_container_width=True)
                 else:
                     st.warning("⚠️ لم يتم العثور على نتائج لهذا الرقم")
@@ -251,9 +226,9 @@ with tab_single:
         else:
             st.warning("⚠️ الرجاء إدخال رقم الناخب")
 
-# -----------------------------------------------------------------------------
-# 3) 📂 رفع ملف Excel (نفس منطقك)
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 3) 📂 البحث باستخدام ملف Excel
+# ---------------------------------------------------------------------------
 with tab_file:
     st.subheader("📂 البحث باستخدام ملف Excel")
     uploaded_voter_file = st.file_uploader("ارفع ملف الناخبين (يحتوي على VoterNo أو رقم الناخب)", type=["xlsx"])
@@ -297,7 +272,7 @@ with tab_file:
                             "رقم مركز الاقتراع": "رقم مركز الاقتراع",
                             "رقم المحطة": "رقم المحطة"
                         })
-                        df["الجنس"] = df["الجنس"].apply(lambda x: "F" if str(x) == "1" else "M")
+                        df = format_gender(df)
 
                         df["رقم المندوب الرئيسي"] = ""
                         df["الحالة"] = 0
