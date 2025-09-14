@@ -153,6 +153,8 @@ with tab_browse:
             df["الجنس"] = df["الجنس"].apply(map_gender)
 
         total_pages = max(1, math.ceil(total_rows / page_size))
+
+        # ✅ عرض النتائج
         st.dataframe(df, use_container_width=True, height=500)
 
         c1, c2, c3 = st.columns([1,2,1])
@@ -199,7 +201,9 @@ with tab_single:
                     "رقم المحطة": "رقم المحطة"
                 })
                 df["الجنس"] = df["الجنس"].apply(map_gender)
-                st.dataframe(df, use_container_width=True)
+
+                # ✅ عرض النتائج
+                st.dataframe(df, use_container_width=True, height=500)
             else:
                 st.warning("⚠️ لم يتم العثور على نتائج")
         except Exception as e:
@@ -244,12 +248,15 @@ with tab_file:
                          "رقم العائلة","مركز الاقتراع","رقم مركز الاقتراع",
                          "رقم المحطة","رقم المندوب الرئيسي","الحالة","ملاحظة"]]
 
+                # ✅ عرض النتائج
+                st.dataframe(df, use_container_width=True, height=500)
+
+                # ✅ تنزيل Excel
                 output_file = "نتائج_البحث.xlsx"
                 df.to_excel(output_file, index=False, engine="openpyxl")
                 wb = load_workbook(output_file)
                 wb.active.sheet_view.rightToLeft = True
                 wb.save(output_file)
-
                 with open(output_file, "rb") as f:
                     st.download_button("⬇️ تحميل النتائج", f,
                         file_name="نتائج_البحث.xlsx",
@@ -306,12 +313,15 @@ with tab_ocr:
                          "رقم العائلة","مركز الاقتراع","رقم مركز الاقتراع",
                          "رقم المحطة","رقم المندوب الرئيسي","الحالة","ملاحظة"]]
 
+                # ✅ عرض النتائج
+                st.dataframe(df, use_container_width=True, height=500)
+
+                # ✅ تنزيل Excel
                 output_file = "ocr_نتائج_البحث.xlsx"
                 df.to_excel(output_file, index=False, engine="openpyxl")
                 wb = load_workbook(output_file)
                 wb.active.sheet_view.rightToLeft = True
                 wb.save(output_file)
-
                 with open(output_file, "rb") as f:
                     st.download_button("⬇️ تحميل النتائج OCR", f,
                         file_name="ocr_نتائج_البحث.xlsx",
