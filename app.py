@@ -204,7 +204,6 @@ with tab_single:
                 })
                 df["الجنس"] = df["الجنس"].apply(map_gender)
 
-                # ✅ عرض النتائج
                 st.dataframe(df, use_container_width=True, height=500)
             else:
                 st.warning("⚠️ لم يتم العثور على نتائج")
@@ -250,10 +249,8 @@ with tab_file:
                          "رقم العائلة","مركز الاقتراع","رقم مركز الاقتراع",
                          "رقم المحطة","رقم المندوب الرئيسي","الحالة","ملاحظة"]]
 
-                # ✅ عرض النتائج
                 st.dataframe(df, use_container_width=True, height=500)
 
-                # ✅ تنزيل Excel
                 output_file = "نتائج_البحث.xlsx"
                 df.to_excel(output_file, index=False, engine="openpyxl")
                 wb = load_workbook(output_file)
@@ -275,7 +272,7 @@ with tab_file:
 with tab_ocr:
     st.subheader("📸 استخراج رقم الناخب من الصور")
 
-    # ---- قسم جديد: استخراج الأرقام فقط (بدون بحث في DB) ----
+    # ---- قسم جديد: استخراج الأرقام فقط ----
     st.markdown("### 🔎 استخراج الأرقام فقط (بدون البحث في قاعدة البيانات)")
     imgs_only = st.file_uploader(
         "📤 ارفع صور البطاقات (لاستخراج الأرقام فقط)",
@@ -288,8 +285,8 @@ with tab_ocr:
         if client is None:
             st.error("❌ خطأ في إعداد Google Vision.")
         else:
-            clear_numbers = []         # أرقام مطابقة للـ regex الواضح \b\d{6,10}\b
-            unclear_candidates = []    # أرقام مشكوكة / بها ضوضاء (original, cleaned)
+            clear_numbers = []
+            unclear_candidates = []
 
             for img in imgs_only:
                 try:
@@ -299,26 +296,19 @@ with tab_ocr:
                     texts = response.text_annotations
                     if texts:
                         full_text = texts[0].description
-
-                        # أ) أرقام واضحة: 6 إلى 10 رقم متتالٍ
                         found_clear = re.findall(r"\b\d{6,10}\b", full_text)
                         clear_numbers.extend(found_clear)
 
-                        # ب) محاولات إيجاد أرقام "غير واضحة" (مسافات/شرط/فواصل) مثل "12-3456-78" أو "12 345678"
                         raw_candidates = re.findall(r"[0-9][0-9\-\s]{4,12}[0-9]", full_text)
                         for cand in raw_candidates:
                             if cand not in found_clear:
-                                cleaned = re.sub(r"\D", "", cand)  # إزالة غير الأرقام
-                                # إذا كان طول المنظف بين 6 و10 نعتبره مرشحًا غير واضح
+                                cleaned = re.sub(r"\D", "", cand)
                                 if 6 <= len(cleaned) <= 10:
                                     unclear_candidates.append({"original": cand, "cleaned": cleaned})
                 except Exception as e:
-                    # لا نوقف العملية بسبب صورة واحدة فاشلة
                     st.warning(f"⚠️ خطأ أثناء معالجة صورة: {e}")
 
-            # إزالة التكرارات والحفاظ على الترتيب البسيط
             clear_numbers = list(dict.fromkeys(clear_numbers))
-            # كذلك إزالة تكرارات الـ cleaned ضمن unclear
             seen_cleaned = set()
             uniq_unclear = []
             for item in unclear_candidates:
@@ -333,14 +323,28 @@ with tab_ocr:
             if clear_numbers:
                 st.markdown("**قائمة الأرقام الواضحة:**")
                 st.write(clear_numbers)
+                clear_df = pd.DataFrame(clear_numbers, columns=["الأرقام الواضحة"])
+                clear_file = "clear_numbers.xlsx"
+                clear_df.to_excel(clear_file, index=False, engine="openpyxl")
+                with open(clear_file, "rb") as f:
+                    st.download_button("⬇️ تحميل الأرقام الواضحة", f,
+                        file_name="الأرقام_الواضحة.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
             if uniq_unclear:
                 st.markdown("**قائمة الأرقام غير الواضحة (الأصلية → بعد التنظيف):**")
                 st.dataframe(uniq_unclear)
+                unclear_df = pd.DataFrame(uniq_unclear)
+                unclear_file = "unclear_numbers.xlsx"
+                unclear_df.to_excel(unclear_file, index=False, engine="openpyxl")
+                with open(unclear_file, "rb") as f:
+                    st.download_button("⬇️ تحميل الأرقام المشكوك فيها", f,
+                        file_name="الأرقام_المشكوك_فيها.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     st.markdown("---")
 
-    # ---- القسم الأصلي: استخراج + البحث في DB (كما كان عندك) ----
+    # ---- القسم الأصلي: استخراج + البحث ----
     imgs = st.file_uploader("📤 ارفع صور البطاقات (للاستخراج والبحث في قاعدة البيانات)", type=["jpg","jpeg","png"], accept_multiple_files=True)
     if imgs and st.button("🚀 استخراج والبحث"):
         client = setup_google_vision()
@@ -389,10 +393,8 @@ with tab_ocr:
                                  "رقم العائلة","مركز الاقتراع","رقم مركز الاقتراع",
                                  "رقم المحطة","رقم المندوب الرئيسي","الحالة","ملاحظة"]]
 
-                        # ✅ عرض النتائج
                         st.dataframe(df, use_container_width=True, height=500)
 
-                        # ✅ تنزيل Excel
                         output_file = "ocr_نتائج_البحث.xlsx"
                         df.to_excel(output_file, index=False, engine="openpyxl")
                         wb = load_workbook(output_file)
