@@ -200,7 +200,7 @@ with tab_single:
                     "رقم العائلة": "رقم العائلة",
                     "اسم مركز الاقتراع": "مركز الاقتراع",
                     "رقم مركز الاقتراع": "رقم مركز الاقتراع",
-                    "رقم المحطة": "رقم المحطة"
+                    "رقم المحطة": "رقم محطة"
                 })
                 df["الجنس"] = df["الجنس"].apply(map_gender)
 
@@ -272,7 +272,7 @@ with tab_file:
 with tab_ocr:
     st.subheader("📸 استخراج رقم الناخب من الصور")
 
-    # ---- قسم جديد: استخراج الأرقام فقط ----
+    # ---- قسم: استخراج الأرقام فقط (بدون البحث) ----
     st.markdown("### 🔎 استخراج الأرقام فقط (بدون البحث في قاعدة البيانات)")
     imgs_only = st.file_uploader(
         "📤 ارفع صور البطاقات (لاستخراج الأرقام فقط)",
@@ -287,6 +287,7 @@ with tab_ocr:
         else:
             clear_numbers = []
             unclear_candidates = []
+            results = []
 
             for img in imgs_only:
                 try:
@@ -297,7 +298,11 @@ with tab_ocr:
                     if texts:
                         full_text = texts[0].description
                         found_clear = re.findall(r"\b\d{6,10}\b", full_text)
-                        clear_numbers.extend(found_clear)
+
+                        # فقط نحتفظ بالصور التي تحتوي أرقام ناخب واضحة
+                        if found_clear:
+                            clear_numbers.extend(found_clear)
+                            results.append({"filename": img.name, "content": img, "numbers": found_clear})
 
                         raw_candidates = re.findall(r"[0-9][0-9\-\s]{4,12}[0-9]", full_text)
                         for cand in raw_candidates:
@@ -315,6 +320,12 @@ with tab_ocr:
                 if item["cleaned"] not in seen_cleaned and item["cleaned"] not in clear_numbers:
                     seen_cleaned.add(item["cleaned"])
                     uniq_unclear.append(item)
+
+            if results:
+                st.markdown("### 🖼️ الصور التي تحتوي أرقام ناخب (مرفقة ✅):")
+                for r in results:
+                    numbers_str = ", ".join(r["numbers"])
+                    st.image(r["content"], caption=f"{r['filename']} — الأرقام: {numbers_str}", use_column_width=True)
 
             st.success("✅ الانتهاء من الاستخراج")
             st.metric("الأرقام الواضحة المكتشفة", len(clear_numbers))
@@ -344,14 +355,21 @@ with tab_ocr:
 
     st.markdown("---")
 
-    # ---- القسم الأصلي: استخراج + البحث ----
-    imgs = st.file_uploader("📤 ارفع صور البطاقات (للاستخراج والبحث في قاعدة البيانات)", type=["jpg","jpeg","png"], accept_multiple_files=True)
+    # ---- قسم: استخراج + البحث في قاعدة البيانات ----
+    imgs = st.file_uploader(
+        "📤 ارفع صور البطاقات (للاستخراج والبحث في قاعدة البيانات)",
+        type=["jpg","jpeg","png"],
+        accept_multiple_files=True,
+        key="ocr_search"
+    )
     if imgs and st.button("🚀 استخراج والبحث"):
         client = setup_google_vision()
         if client is None:
             st.error("❌ لم يتم تحميل مفتاح Google Vision بشكل صحيح.")
         else:
             all_voters = []
+            results = []  # صور التي تحتوي أرقام
+
             for img in imgs:
                 try:
                     content = img.read()
@@ -360,9 +378,16 @@ with tab_ocr:
                     texts = response.text_annotations
                     if texts:
                         numbers = re.findall(r"\b\d{6,10}\b", texts[0].description)
-                        all_voters.extend(numbers)
+                        if numbers:
+                            all_voters.extend(numbers)
+                            results.append({"filename": img.name, "content": img, "numbers": numbers})
                 except Exception as e:
                     st.warning(f"⚠️ خطأ أثناء معالجة صورة: {e}")
+
+            if results:
+                st.markdown("### 🖼️ الصور التي تحتوي أرقام ناخب:")
+                for r in results:
+                    st.image(r["content"], caption=f"{r['filename']} — الأرقام: {', '.join(r['numbers'])}", use_column_width=True)
 
             if all_voters:
                 try:
@@ -407,4 +432,65 @@ with tab_ocr:
                     else:
                         st.warning("⚠️ لم يتم العثور على نتائج")
                 except Exception as e:
-                    st.error(f"❌ خطأ أثناء البحث في قاعدة البيانات
+                    st.error(f"❌ خطأ أثناء البحث في قاعدة البيانات: {e}")
+            else:
+                st.warning("⚠️ لم يتعرّف على أي أرقام في الصور")
+
+# ----------------------------------------------------------------------------- #
+# 5) 📦 عدّ البطاقات
+# ----------------------------------------------------------------------------- #
+with tab_count:
+    st.subheader("📦 عدّ البطاقات (عدد البطاقات = عدد أرقام الناخب داخل الصور)")
+
+    imgs_count = st.file_uploader(
+        "📤 ارفع صور الصفحات (قد تحتوي أكثر من بطاقة)",
+        type=["jpg","jpeg","png"],
+        accept_multiple_files=True,
+        key="ocr_count"
+    )
+
+    if imgs_count and st.button("🚀 عدّ البطاقات"):
+        client = setup_google_vision()
+        if client is None:
+            st.error("❌ خطأ في إعداد Google Vision.")
+        else:
+            all_numbers = []   # كل الأرقام من جميع الصور
+            details = []       # تفاصيل لكل صورة
+
+            for img in imgs_count:
+                try:
+                    content = img.read()
+                    image = vision.Image(content=content)
+                    response = client.text_detection(image=image)
+                    texts = response.text_annotations
+                    if texts:
+                        found_numbers = re.findall(r"\b\d{6,10}\b", texts[0].description)
+                        all_numbers.extend(found_numbers)
+
+                        details.append({
+                            "اسم الملف": img.name,
+                            "عدد البطاقات": len(found_numbers),
+                            "الأرقام المكتشفة": ", ".join(found_numbers) if found_numbers else "لا يوجد"
+                        })
+                except Exception as e:
+                    st.warning(f"⚠️ خطأ أثناء معالجة صورة: {e}")
+
+            total_cards = len(all_numbers)
+
+            # ✅ عرض النتائج
+            st.success("✅ تم الانتهاء من العدّ")
+            st.metric("إجمالي عدد البطاقات المكتشفة", total_cards)
+            st.metric("عدد الصور المرفوعة", len(imgs_count))
+
+            if details:
+                st.markdown("### 📋 تفاصيل كل صورة:")
+                df = pd.DataFrame(details)
+                st.dataframe(df, use_container_width=True)
+
+                # تحميل النتائج Excel
+                out_file = "إحصائية_البطاقات.xlsx"
+                df.to_excel(out_file, index=False, engine="openpyxl")
+                with open(out_file, "rb") as f:
+                    st.download_button("⬇️ تحميل ملف الإحصائية", f,
+                        file_name="إحصائية_البطاقات.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
