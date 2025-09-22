@@ -106,6 +106,7 @@ with tab_browse:
         }
         st.session_state.page = 1
 
+    # --- بناء شروط البحث ---
     where_clauses, params = [], []
     if st.session_state.filters["voter"]:
         where_clauses.append('CAST("VoterNo" AS TEXT) ILIKE %s')
@@ -155,6 +156,7 @@ with tab_browse:
 
         total_pages = max(1, math.ceil(total_rows / page_size))
 
+        # ✅ عرض النتائج
         st.dataframe(df, use_container_width=True, height=500)
 
         c1, c2, c3 = st.columns([1,2,1])
@@ -202,6 +204,7 @@ with tab_single:
                 })
                 df["الجنس"] = df["الجنس"].apply(map_gender)
 
+                # ✅ عرض النتائج
                 st.dataframe(df, use_container_width=True, height=500)
             else:
                 st.warning("⚠️ لم يتم العثور على نتائج")
@@ -247,8 +250,10 @@ with tab_file:
                          "رقم العائلة","مركز الاقتراع","رقم مركز الاقتراع",
                          "رقم المحطة","رقم المندوب الرئيسي","الحالة","ملاحظة"]]
 
+                # ✅ عرض النتائج
                 st.dataframe(df, use_container_width=True, height=500)
 
+                # ✅ تنزيل Excel
                 output_file = "نتائج_البحث.xlsx"
                 df.to_excel(output_file, index=False, engine="openpyxl")
                 wb = load_workbook(output_file)
@@ -265,133 +270,63 @@ with tab_file:
             st.error(f"❌ خطأ: {e}")
 
 # ----------------------------------------------------------------------------- #
-# 4) 📸 OCR صور بطاقات (مع ✅ / ❌)
+# 4) 📸 OCR صور بطاقات
 # ----------------------------------------------------------------------------- #
 with tab_ocr:
     st.subheader("📸 استخراج رقم الناخب من الصور")
-
-    # ---- قسم جديد: استخراج الأرقام فقط ----
-    st.markdown("### 🔎 استخراج الأرقام فقط (بدون البحث في قاعدة البيانات)")
-    imgs_only = st.file_uploader(
-        "📤 ارفع صور البطاقات (لاستخراج الأرقام فقط)",
-        type=["jpg","jpeg","png"],
-        accept_multiple_files=True,
-        key="ocr_only"
-    )
-    if imgs_only and st.button("🚀 استخراج الأرقام فقط"):
-        client = setup_google_vision()
-        if client is None:
-            st.error("❌ خطأ في إعداد Google Vision.")
-        else:
-            clear_numbers = []
-            unclear_candidates = []
-            results = []
-
-            for img in imgs_only:
-                try:
-                    content = img.read()
-                    image = vision.Image(content=content)
-                    response = client.text_detection(image=image)
-                    texts = response.text_annotations
-                    if texts:
-                        full_text = texts[0].description
-                        found_clear = re.findall(r"\b\d{6,10}\b", full_text)
-
-                        status_icon = "✅" if found_clear else "❌"
-                        if found_clear:
-                            clear_numbers.extend(found_clear)
-
-                        results.append({"filename": img.name, "content": img, "status": status_icon})
-
-                        raw_candidates = re.findall(r"[0-9][0-9\-\s]{4,12}[0-9]", full_text)
-                        for cand in raw_candidates:
-                            if cand not in found_clear:
-                                cleaned = re.sub(r"\D", "", cand)
-                                if 6 <= len(cleaned) <= 10:
-                                    unclear_candidates.append({"original": cand, "cleaned": cleaned})
-                except Exception as e:
-                    st.warning(f"⚠️ خطأ أثناء معالجة صورة: {e}")
-
-            clear_numbers = list(dict.fromkeys(clear_numbers))
-            seen_cleaned, uniq_unclear = set(), []
-            for item in unclear_candidates:
-                if item["cleaned"] not in seen_cleaned and item["cleaned"] not in clear_numbers:
-                    seen_cleaned.add(item["cleaned"])
-                    uniq_unclear.append(item)
-
-            if results:
-                st.markdown("### 🖼️ حالة الصور:")
-                for r in results:
-                    col1, col2 = st.columns([3,1])
-                    with col1:
-                        st.image(r["content"], caption=r["filename"], use_column_width=True)
-                    with col2:
-                        st.markdown(f"<h2 style='text-align:center'>{r['status']}</h2>", unsafe_allow_html=True)
-
-            st.success("✅ الانتهاء من الاستخراج")
-            st.metric("الأرقام الواضحة المكتشفة", len(clear_numbers))
-            st.metric("الأرقام المشكوك فيها", len(uniq_unclear))
-
-    st.markdown("---")
-
-    # ---- القسم الأصلي: استخراج + البحث ----
-    imgs = st.file_uploader("📤 ارفع صور البطاقات (للاستخراج والبحث)", type=["jpg","jpeg","png"], accept_multiple_files=True)
+    imgs = st.file_uploader("📤 ارفع صور البطاقات", type=["jpg","jpeg","png"], accept_multiple_files=True)
     if imgs and st.button("🚀 استخراج والبحث"):
         client = setup_google_vision()
-        if client is None:
-            st.error("❌ لم يتم تحميل مفتاح Google Vision بشكل صحيح.")
-        else:
-            all_voters, results = [], []
-            for img in imgs:
-                try:
-                    content = img.read()
-                    image = vision.Image(content=content)
-                    response = client.text_detection(image=image)
-                    texts = response.text_annotations
-                    if texts:
-                        numbers = re.findall(r"\b\d{6,10}\b", texts[0].description)
-                        status_icon = "✅" if numbers else "❌"
-                        if numbers:
-                            all_voters.extend(numbers)
+        all_voters = []
+        for img in imgs:
+            content = img.read()
+            image = vision.Image(content=content)
+            response = client.text_detection(image=image)
+            texts = response.text_annotations
+            if texts:
+                numbers = re.findall(r"\b\d{6,10}\b", texts[0].description)
+                all_voters.extend(numbers)
 
-                        results.append({"filename": img.name, "content": img, "status": status_icon})
-                except Exception as e:
-                    st.warning(f"⚠️ خطأ أثناء معالجة صورة: {e}")
+        if all_voters:
+            conn = get_conn()
+            placeholders = ",".join(["%s"] * len(all_voters))
+            query = f"""
+                SELECT "VoterNo","الاسم الثلاثي","الجنس","هاتف","رقم العائلة",
+                       "اسم مركز الاقتراع","رقم مركز الاقتراع","رقم المحطة"
+                FROM voters WHERE "VoterNo" IN ({placeholders})
+            """
+            df = pd.read_sql_query(query, conn, params=all_voters)
+            conn.close()
 
-            if results:
-                st.markdown("### 🖼️ حالة الصور:")
-                for r in results:
-                    col1, col2 = st.columns([3,1])
-                    with col1:
-                        st.image(r["content"], caption=r["filename"], use_column_width=True)
-                    with col2:
-                        st.markdown(f"<h2 style='text-align:center'>{r['status']}</h2>", unsafe_allow_html=True)
+            if not df.empty:
+                df = df.rename(columns={
+                    "VoterNo": "رقم الناخب","الاسم الثلاثي": "الاسم","الجنس": "الجنس",
+                    "هاتف": "رقم الهاتف","رقم العائلة": "رقم العائلة",
+                    "اسم مركز الاقتراع": "مركز الاقتراع","رقم مركز الاقتراع": "رقم مركز الاقتراع",
+                    "رقم المحطة": "رقم المحطة"
+                })
+                df["الجنس"] = df["الجنس"].apply(map_gender)
 
-            if all_voters:
-                try:
-                    conn = get_conn()
-                    placeholders = ",".join(["%s"] * len(all_voters))
-                    query = f"""
-                        SELECT "VoterNo","الاسم الثلاثي","الجنس","هاتف","رقم العائلة",
-                               "اسم مركز الاقتراع","رقم مركز الاقتراع","رقم المحطة"
-                        FROM voters WHERE "VoterNo" IN ({placeholders})
-                    """
-                    df = pd.read_sql_query(query, conn, params=all_voters)
-                    conn.close()
+                df["رقم المندوب الرئيسي"] = ""
+                df["الحالة"] = 0
+                df["ملاحظة"] = ""
 
-                    if not df.empty:
-                        df = df.rename(columns={
-                            "VoterNo": "رقم الناخب","الاسم الثلاثي": "الاسم","الجنس": "الجنس",
-                            "هاتف": "رقم الهاتف","رقم العائلة": "رقم العائلة",
-                            "اسم مركز الاقتراع": "مركز الاقتراع","رقم مركز الاقتراع": "رقم مركز الاقتراع",
-                            "رقم المحطة": "رقم المحطة"
-                        })
-                        df["الجنس"] = df["الجنس"].apply(map_gender)
+                df = df[["رقم الناخب","الاسم","الجنس","رقم الهاتف",
+                         "رقم العائلة","مركز الاقتراع","رقم مركز الاقتراع",
+                         "رقم المحطة","رقم المندوب الرئيسي","الحالة","ملاحظة"]]
 
-                        df["رقم المندوب الرئيسي"] = ""
-                        df["الحالة"] = 0
-                        df["ملاحظة"] = ""
+                # ✅ عرض النتائج
+                st.dataframe(df, use_container_width=True, height=500)
 
-                        st.dataframe(df, use_container_width=True, height=500)
-                except Exception as e:
-                    st.error(f"❌ خطأ أثناء البحث في قاعدة البيانات: {e}")
+                # ✅ تنزيل Excel
+                output_file = "ocr_نتائج_البحث.xlsx"
+                df.to_excel(output_file, index=False, engine="openpyxl")
+                wb = load_workbook(output_file)
+                wb.active.sheet_view.rightToLeft = True
+                wb.save(output_file)
+                with open(output_file, "rb") as f:
+                    st.download_button("⬇️ تحميل النتائج OCR", f,
+                        file_name="ocr_نتائج_البحث.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            else:
+                st.warning("⚠️ لم يتم العثور على نتائج")
