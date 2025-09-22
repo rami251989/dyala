@@ -106,7 +106,6 @@ with tab_browse:
         }
         st.session_state.page = 1
 
-    # --- بناء شروط البحث ---
     where_clauses, params = [], []
     if st.session_state.filters["voter"]:
         where_clauses.append('CAST("VoterNo" AS TEXT) ILIKE %s')
@@ -156,7 +155,6 @@ with tab_browse:
 
         total_pages = max(1, math.ceil(total_rows / page_size))
 
-        # ✅ عرض النتائج
         st.dataframe(df, use_container_width=True, height=500)
 
         c1, c2, c3 = st.columns([1,2,1])
@@ -267,7 +265,7 @@ with tab_file:
             st.error(f"❌ خطأ: {e}")
 
 # ----------------------------------------------------------------------------- #
-# 4) 📸 OCR صور بطاقات
+# 4) 📸 OCR صور بطاقات (مع ✅ / ❌)
 # ----------------------------------------------------------------------------- #
 with tab_ocr:
     st.subheader("📸 استخراج رقم الناخب من الصور")
@@ -287,6 +285,7 @@ with tab_ocr:
         else:
             clear_numbers = []
             unclear_candidates = []
+            results = []
 
             for img in imgs_only:
                 try:
@@ -297,7 +296,12 @@ with tab_ocr:
                     if texts:
                         full_text = texts[0].description
                         found_clear = re.findall(r"\b\d{6,10}\b", full_text)
-                        clear_numbers.extend(found_clear)
+
+                        status_icon = "✅" if found_clear else "❌"
+                        if found_clear:
+                            clear_numbers.extend(found_clear)
+
+                        results.append({"filename": img.name, "content": img, "status": status_icon})
 
                         raw_candidates = re.findall(r"[0-9][0-9\-\s]{4,12}[0-9]", full_text)
                         for cand in raw_candidates:
@@ -309,49 +313,35 @@ with tab_ocr:
                     st.warning(f"⚠️ خطأ أثناء معالجة صورة: {e}")
 
             clear_numbers = list(dict.fromkeys(clear_numbers))
-            seen_cleaned = set()
-            uniq_unclear = []
+            seen_cleaned, uniq_unclear = set(), []
             for item in unclear_candidates:
                 if item["cleaned"] not in seen_cleaned and item["cleaned"] not in clear_numbers:
                     seen_cleaned.add(item["cleaned"])
                     uniq_unclear.append(item)
 
+            if results:
+                st.markdown("### 🖼️ حالة الصور:")
+                for r in results:
+                    col1, col2 = st.columns([3,1])
+                    with col1:
+                        st.image(r["content"], caption=r["filename"], use_column_width=True)
+                    with col2:
+                        st.markdown(f"<h2 style='text-align:center'>{r['status']}</h2>", unsafe_allow_html=True)
+
             st.success("✅ الانتهاء من الاستخراج")
             st.metric("الأرقام الواضحة المكتشفة", len(clear_numbers))
-            st.metric("الأرقام المشكوك فيها (غير واضحة)", len(uniq_unclear))
-
-            if clear_numbers:
-                st.markdown("**قائمة الأرقام الواضحة:**")
-                st.write(clear_numbers)
-                clear_df = pd.DataFrame(clear_numbers, columns=["الأرقام الواضحة"])
-                clear_file = "clear_numbers.xlsx"
-                clear_df.to_excel(clear_file, index=False, engine="openpyxl")
-                with open(clear_file, "rb") as f:
-                    st.download_button("⬇️ تحميل الأرقام الواضحة", f,
-                        file_name="الأرقام_الواضحة.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-            if uniq_unclear:
-                st.markdown("**قائمة الأرقام غير الواضحة (الأصلية → بعد التنظيف):**")
-                st.dataframe(uniq_unclear)
-                unclear_df = pd.DataFrame(uniq_unclear)
-                unclear_file = "unclear_numbers.xlsx"
-                unclear_df.to_excel(unclear_file, index=False, engine="openpyxl")
-                with open(unclear_file, "rb") as f:
-                    st.download_button("⬇️ تحميل الأرقام المشكوك فيها", f,
-                        file_name="الأرقام_المشكوك_فيها.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.metric("الأرقام المشكوك فيها", len(uniq_unclear))
 
     st.markdown("---")
 
     # ---- القسم الأصلي: استخراج + البحث ----
-    imgs = st.file_uploader("📤 ارفع صور البطاقات (للاستخراج والبحث في قاعدة البيانات)", type=["jpg","jpeg","png"], accept_multiple_files=True)
+    imgs = st.file_uploader("📤 ارفع صور البطاقات (للاستخراج والبحث)", type=["jpg","jpeg","png"], accept_multiple_files=True)
     if imgs and st.button("🚀 استخراج والبحث"):
         client = setup_google_vision()
         if client is None:
             st.error("❌ لم يتم تحميل مفتاح Google Vision بشكل صحيح.")
         else:
-            all_voters = []
+            all_voters, results = [], []
             for img in imgs:
                 try:
                     content = img.read()
@@ -360,9 +350,22 @@ with tab_ocr:
                     texts = response.text_annotations
                     if texts:
                         numbers = re.findall(r"\b\d{6,10}\b", texts[0].description)
-                        all_voters.extend(numbers)
+                        status_icon = "✅" if numbers else "❌"
+                        if numbers:
+                            all_voters.extend(numbers)
+
+                        results.append({"filename": img.name, "content": img, "status": status_icon})
                 except Exception as e:
                     st.warning(f"⚠️ خطأ أثناء معالجة صورة: {e}")
+
+            if results:
+                st.markdown("### 🖼️ حالة الصور:")
+                for r in results:
+                    col1, col2 = st.columns([3,1])
+                    with col1:
+                        st.image(r["content"], caption=r["filename"], use_column_width=True)
+                    with col2:
+                        st.markdown(f"<h2 style='text-align:center'>{r['status']}</h2>", unsafe_allow_html=True)
 
             if all_voters:
                 try:
@@ -389,24 +392,6 @@ with tab_ocr:
                         df["الحالة"] = 0
                         df["ملاحظة"] = ""
 
-                        df = df[["رقم الناخب","الاسم","الجنس","رقم الهاتف",
-                                 "رقم العائلة","مركز الاقتراع","رقم مركز الاقتراع",
-                                 "رقم المحطة","رقم المندوب الرئيسي","الحالة","ملاحظة"]]
-
                         st.dataframe(df, use_container_width=True, height=500)
-
-                        output_file = "ocr_نتائج_البحث.xlsx"
-                        df.to_excel(output_file, index=False, engine="openpyxl")
-                        wb = load_workbook(output_file)
-                        wb.active.sheet_view.rightToLeft = True
-                        wb.save(output_file)
-                        with open(output_file, "rb") as f:
-                            st.download_button("⬇️ تحميل النتائج OCR", f,
-                                file_name="ocr_نتائج_البحث.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-                    else:
-                        st.warning("⚠️ لم يتم العثور على نتائج")
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء البحث في قاعدة البيانات: {e}")
-            else:
-                st.warning("⚠️ لم يتعرّف على أي أرقام في الصور")
