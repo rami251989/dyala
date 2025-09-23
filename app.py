@@ -211,7 +211,7 @@ with tab_single:
             st.error(f"❌ خطأ: {e}")
 
 # ----------------------------------------------------------------------------- #
-# 3) 📂 رفع ملف Excel
+# 3) 📂 رفع ملف Excel (معدل مع الأرقام غير الموجودة)
 # ----------------------------------------------------------------------------- #
 with tab_file:
     st.subheader("📂 البحث باستخدام ملف Excel")
@@ -249,8 +249,14 @@ with tab_file:
                          "رقم العائلة","مركز الاقتراع","رقم مركز الاقتراع",
                          "رقم المحطة","رقم المندوب الرئيسي","الحالة","ملاحظة"]]
 
+                # ✅ إيجاد الأرقام غير الموجودة
+                found_numbers = set(df["رقم الناخب"].astype(str).tolist())
+                missing_numbers = [num for num in voters_list if num not in found_numbers]
+
+                # عرض النتائج الموجودة
                 st.dataframe(df, use_container_width=True, height=500)
 
+                # ملف النتائج الموجودة
                 output_file = "نتائج_البحث.xlsx"
                 df.to_excel(output_file, index=False, engine="openpyxl")
                 wb = load_workbook(output_file)
@@ -260,6 +266,19 @@ with tab_file:
                     st.download_button("⬇️ تحميل النتائج", f,
                         file_name="نتائج_البحث.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+                # عرض وتحميل الأرقام غير الموجودة
+                if missing_numbers:
+                    st.warning("⚠️ الأرقام التالية لم يتم العثور عليها في قاعدة البيانات:")
+                    st.write(missing_numbers)
+
+                    missing_df = pd.DataFrame(missing_numbers, columns=["الأرقام غير الموجودة"])
+                    miss_file = "missing_numbers.xlsx"
+                    missing_df.to_excel(miss_file, index=False, engine="openpyxl")
+                    with open(miss_file, "rb") as f:
+                        st.download_button("⬇️ تحميل الأرقام غير الموجودة", f,
+                            file_name="الأرقام_غير_الموجودة.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
             else:
                 st.warning("⚠️ لا يوجد نتائج")
@@ -299,7 +318,6 @@ with tab_ocr:
                         full_text = texts[0].description
                         found_clear = re.findall(r"\b\d{6,10}\b", full_text)
 
-                        # فقط نحتفظ بالصور التي تحتوي أرقام ناخب واضحة
                         if found_clear:
                             clear_numbers.extend(found_clear)
                             results.append({"filename": img.name, "content": img, "numbers": found_clear})
@@ -368,7 +386,7 @@ with tab_ocr:
             st.error("❌ لم يتم تحميل مفتاح Google Vision بشكل صحيح.")
         else:
             all_voters = []
-            results = []  # صور التي تحتوي أرقام
+            results = []
 
             for img in imgs:
                 try:
@@ -454,8 +472,8 @@ with tab_count:
         if client is None:
             st.error("❌ خطأ في إعداد Google Vision.")
         else:
-            all_numbers = []   # كل الأرقام من جميع الصور
-            details = []       # تفاصيل لكل صورة
+            all_numbers = []
+            details = []
 
             for img in imgs_count:
                 try:
@@ -477,7 +495,6 @@ with tab_count:
 
             total_cards = len(all_numbers)
 
-            # ✅ عرض النتائج
             st.success("✅ تم الانتهاء من العدّ")
             st.metric("إجمالي عدد البطاقات المكتشفة", total_cards)
             st.metric("عدد الصور المرفوعة", len(imgs_count))
@@ -487,7 +504,6 @@ with tab_count:
                 df = pd.DataFrame(details)
                 st.dataframe(df, use_container_width=True)
 
-                # تحميل النتائج Excel
                 out_file = "إحصائية_البطاقات.xlsx"
                 df.to_excel(out_file, index=False, engine="openpyxl")
                 with open(out_file, "rb") as f:
