@@ -455,10 +455,10 @@ with tab_ocr:
                 st.warning("⚠️ لم يتعرّف على أي أرقام في الصور")
 
 # ----------------------------------------------------------------------------- #
-# 5) 📦 عدّ البطاقات
+# 5) 📦 عدّ البطاقات (الأرقام = فقط التي تحتوي 8 خانات)
 # ----------------------------------------------------------------------------- #
 with tab_count:
-    st.subheader("📦 عدّ البطاقات (عدد البطاقات = عدد أرقام الناخب داخل الصور)")
+    st.subheader("📦 عدّ البطاقات (أرقام الناخب = أرقام مكونة من 8 خانات)")
 
     imgs_count = st.file_uploader(
         "📤 ارفع صور الصفحات (قد تحتوي أكثر من بطاقة)",
@@ -482,13 +482,15 @@ with tab_count:
                     response = client.text_detection(image=image)
                     texts = response.text_annotations
                     if texts:
-                        found_numbers = re.findall(r"\b\d{6,10}\b", texts[0].description)
+                        full_text = texts[0].description
+                        # ✅ استخراج فقط الأرقام التي تحتوي على 8 خانات
+                        found_numbers = re.findall(r"\b\d{8}\b", full_text)
                         all_numbers.extend(found_numbers)
 
                         details.append({
                             "اسم الملف": img.name,
-                            "عدد البطاقات": len(found_numbers),
-                            "الأرقام المكتشفة": ", ".join(found_numbers) if found_numbers else "لا يوجد"
+                            "عدد البطاقات (8 أرقام)": len(found_numbers),
+                            "الأرقام المكتشفة (8 خانات فقط)": ", ".join(found_numbers) if found_numbers else "لا يوجد"
                         })
                 except Exception as e:
                     st.warning(f"⚠️ خطأ أثناء معالجة صورة: {e}")
@@ -496,7 +498,7 @@ with tab_count:
             total_cards = len(all_numbers)
 
             st.success("✅ تم الانتهاء من العدّ")
-            st.metric("إجمالي عدد البطاقات المكتشفة", total_cards)
+            st.metric("إجمالي عدد البطاقات (أرقام 8 خانات)", total_cards)
             st.metric("عدد الصور المرفوعة", len(imgs_count))
 
             if details:
