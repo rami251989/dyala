@@ -459,14 +459,14 @@ with tab_ocr:
             else:
                 st.warning("⚠️ لم يتعرّف على أي أرقام في الصور")
 # ----------------------------------------------------------------------------- #
-# 5) 📦 عدّ البطاقات (أرقام الناخب = أرقام مكونة من 8 خانات) + بحث + قصّ
+# 5) 📦 عدّ البطاقات (أرقام 8 خانات) + بحث في القاعدة + قائمة الأرقام غير الموجودة
 # ----------------------------------------------------------------------------- #
 with tab_count:
-    st.subheader("📦 عدّ البطاقات (أرقام 8 خانات) — بحث في القاعدة + الأرقام غير الموجودة + قص البطاقات")
+    st.subheader("📦 عدّ البطاقات (أرقام 8 خانات) — بحث في القاعدة + الأرقام غير الموجودة")
 
     imgs_count = st.file_uploader(
-        "📤 ارفع صور الصفحات (قد تحتوي أكثر من بطاقة)", 
-        type=["jpg","jpeg","png"], 
+        "📤 ارفع صور الصفحات (قد تحتوي أكثر من بطاقة)",
+        type=["jpg","jpeg","png"],
         accept_multiple_files=True,
         key="ocr_count"
     )
@@ -476,11 +476,9 @@ with tab_count:
         if client is None:
             st.error("❌ خطأ في إعداد Google Vision.")
         else:
-            # مجموع الأرقام (قائمة) وخرائط للأرقام إلى اسم الصورة
-            all_numbers = []               # قائمة بكل الأرقام الثمانية المكتشفة
-            number_to_files = {}           # {number: set(filenames)}
-            details = []                   # تفاصيل لكل ملف (للعرض)
-            crops_info = []                # قائمة للكروبات المقتطعة للعرض والتحميل
+            all_numbers = []               # قائمة بكل الأرقام الثمانية المكتشفة (مع التكرار)
+            number_to_files = {}           # خريطة: رقم -> مجموعة أسماء صور المصدر
+            details = []                   # تفاصيل لكل ملف للعرض/تحميل
 
             for img in imgs_count:
                 try:
@@ -490,89 +488,21 @@ with tab_count:
                     texts = response.text_annotations
                     full_text = texts[0].description if texts else ""
 
-                    # استخراج أرقام 8 خانات فقط
+                    # استخراج أرقام مكونة من 8 خانات فقط
                     found_numbers = re.findall(r"\b\d{8}\b", full_text)
                     for n in found_numbers:
                         all_numbers.append(n)
                         number_to_files.setdefault(n, set()).add(img.name)
 
-                    # عدّ عدد الأرقام 8 خانات في الصورة
                     details.append({
                         "اسم الملف": img.name,
                         "عدد البطاقات (أرقام 8 خانات)": len(found_numbers),
                         "الأرقام المكتشفة (8 خانات فقط)": ", ".join(found_numbers) if found_numbers else "لا يوجد"
                     })
 
-                    # ------- محاولة قص البطاقات داخل الصورة (heuristic) -------
-                    try:
-                        # اقرأ الصورة bytes إلى مصفوفة OpenCV
-                        pil_img = Image.open(io.BytesIO(content)).convert("RGB")
-                        cv_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
-
-                        h_img, w_img = cv_img.shape[:2]
-                        gray = cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
-                        blur = cv2.GaussianBlur(gray, (5,5), 0)
-                        edged = cv2.Canny(blur, 30, 150)
-
-                        # تضييق الخطوط قليلاً بالـ morphology
-                        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5,5))
-                        closed = cv2.morphologyEx(edged, cv2.MORPH_CLOSE, kernel)
-
-                        contours, _ = cv2.findContours(closed.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-                        rects = []
-                        for cnt in contours:
-                            x,y,w,h = cv2.boundingRect(cnt)
-                            area = w*h
-                            # معايير تقريبية لفلترة المربعات/المستطيلات التي قد تكون بطاقة:
-                            if area < 0.01 * (w_img*h_img):   # تجاهل المناطق الصغيرة جدا (<1% من الصورة)
-                                continue
-                            if h < 30 or w < 30:
-                                continue
-                            ar = w / float(h)
-                            # بطاقة الهوية عادة مستطيل عرض أكبر من الارتفاع أو العكس إذا الصورة مائلة.
-                            if 0.5 <= ar <= 2.5:
-                                rects.append((x,y,w,h))
-
-                        # لو لم يجد contours مناسبة، نجرب طريقة بديلة: تقسيم الشبكة
-                        if not rects:
-                            # نقسم الصفحة إلى شبكة 3x3 كاحتياط (مفيد لصفحات المجمعة)
-                            nrows, ncols = 3, 3
-                            cell_h = h_img // nrows
-                            cell_w = w_img // ncols
-                            for r in range(nrows):
-                                for c in range(ncols):
-                                    x = c * cell_w
-                                    y = r * cell_h
-                                    w = cell_w
-                                    h = cell_h
-                                    rects.append((x,y,w,h))
-
-                        # الآن نحفظ الكروبات المقتطعة (نقص الحدود قليلًا)
-                        crop_count = 0
-                        for (x,y,w,h) in rects:
-                            pad_x = int(w * 0.02)
-                            pad_y = int(h * 0.02)
-                            x1 = max(0, x - pad_x)
-                            y1 = max(0, y - pad_y)
-                            x2 = min(w_img, x + w + pad_x)
-                            y2 = min(h_img, y + h + pad_y)
-                            crop = cv_img[y1:y2, x1:x2]
-                            # تحويل للـ JPEG في الذاكرة
-                            is_success, buffer = cv2.imencode(".jpg", crop)
-                            if is_success:
-                                crop_bytes = buffer.tobytes()
-                                crop_fname = f"crop_{img.name}_{crop_count}.jpg"
-                                crops_info.append({"source_file": img.name, "crop_name": crop_fname, "bytes": crop_bytes})
-                                crop_count += 1
-                    except Exception as ex_crop:
-                        # لا نوقف العمل إن فشل القص، فقط نعلم المستخدم
-                        st.warning(f"⚠️ فشل قص البطاقات في الصورة {img.name}: {ex_crop}")
-
                 except Exception as e:
                     st.warning(f"⚠️ خطأ أثناء معالجة صورة {img.name}: {e}")
 
-            # نهاية حلقة الصور
             total_cards = len(all_numbers)
             unique_numbers = sorted(list(set(all_numbers)))
 
@@ -590,11 +520,9 @@ with tab_count:
                                "اسم مركز الاقتراع","رقم مركز الاقتراع","رقم المحطة"
                         FROM voters WHERE "VoterNo" IN ({placeholders})
                     """
-                    # نقرأ بالداتا فريم
                     found_df = pd.read_sql_query(query, conn, params=unique_numbers)
                     conn.close()
 
-                    # تعيين أسماء الأعمدة العربية لعرض أفضل إذا وجد شيء
                     if not found_df.empty:
                         found_df = found_df.rename(columns={
                             "VoterNo": "رقم الناخب",
@@ -608,11 +536,9 @@ with tab_count:
                         })
                         found_df["الجنس"] = found_df["الجنس"].apply(map_gender)
 
-                    # احسب الأرقام المفقودة
                     found_numbers_in_db = set(found_df["رقم الناخب"].astype(str).tolist()) if not found_df.empty else set()
                     for n in unique_numbers:
                         if n not in found_numbers_in_db:
-                            # احصل على اسم/أسماء الصور التي أتى منها الرقم
                             files = sorted(list(number_to_files.get(n, [])))
                             missing_list.append({"رقم_الناخب": n, "المصدر(الصور)": ", ".join(files)})
                 except Exception as e:
@@ -629,7 +555,6 @@ with tab_count:
             st.markdown("### 🔎 بيانات الناخبين (الموجودة في قاعدة البيانات)")
             if not found_df.empty:
                 st.dataframe(found_df, use_container_width=True, height=400)
-                # تنزيل النتائج
                 out_found = "found_voters.xlsx"
                 found_df.to_excel(out_found, index=False, engine="openpyxl")
                 with open(out_found, "rb") as f:
@@ -651,15 +576,3 @@ with tab_count:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             else:
                 st.success("✅ لا توجد أرقام مفقودة (كل الأرقام الموجودة تم إيجادها في قاعدة البيانات).")
-
-            # ----------------- عرض الكروبات المقتطعة (Crop) -----------------
-            if crops_info:
-                st.markdown("### ✂️ الكروبات المقتطعة من الصور (كل بطاقة كصورة منفصلة)")
-                # نعرض أولًا معاينة صغيرة لكل كروب وإمكانية تنزيل
-                for c in crops_info:
-                    st.image(c["bytes"], caption=f"{c['source_file']} → {c['crop_name']}", use_column_width=False, width=240)
-                    with io.BytesIO(c["bytes"]) as bf:
-                        st.download_button(f"⬇️ تنزيل {c['crop_name']}", bf, file_name=c["crop_name"], mime="image/jpeg")
-            else:
-                st.info("ℹ️ لم يتم استخراج كروبات من الصور (لم تُكتشف مستطيلات/مناطق مناسبة أو فشل القص).")
-
