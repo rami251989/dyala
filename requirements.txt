@@ -4,3 +4,6 @@ psycopg2-binary
 openpyxl
 python-dotenv
 google-cloud-vision
+opencv-python-headless
+numpy
+Pillow
