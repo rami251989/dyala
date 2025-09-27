@@ -8,11 +8,6 @@ from dotenv import load_dotenv
 from google.cloud import vision
 import re
 import base64
-import cv2
-import numpy as np
-from PIL import Image
-import io
-import tempfile
 
 # ---- الإعدادات العامة / البيئة ----
 load_dotenv()
@@ -22,7 +17,7 @@ PASSWORD = "Moraqip@123"
 
 st.set_page_config(page_title="المراقب الذكي", layout="wide")
 
-# ---- إعداد Google Vision من secrets ----
+# ---- إعداد Google Vision ----
 def setup_google_vision():
     try:
         key_b64 = st.secrets["GOOGLE_VISION_KEY_B64"]
@@ -32,7 +27,7 @@ def setup_google_vision():
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "google_vision.json"
         return vision.ImageAnnotatorClient()
     except Exception as e:
-        st.error(f"❌ لم يتم تحميل مفتاح Google Vision بشكل صحيح: {e}")
+        st.error(f"❌ لم يتم تحميل مفتاح Google Vision: {e}")
         return None
 
 # ---- اتصال قاعدة البيانات ----
@@ -46,7 +41,7 @@ def get_conn():
         sslmode=os.environ.get("DB_SSLMODE", "require")
     )
 
-# ---- دالة تحويل الجنس ----
+# ---- تحويل الجنس ----
 def map_gender(x):
     try:
         val = int(float(x))
@@ -68,16 +63,17 @@ def login():
 
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
-
 if not st.session_state.logged_in:
     login()
     st.stop()
 
-# ========================== الواجهة بعد تسجيل الدخول ==========================
-st.title("📊 المراقب الذكي - البحث في سجلات الناخبين")
-st.markdown("سيتم البحث في قواعد البيانات باستخدام الذكاء الاصطناعي 🤖")
+# ========================== اختيار المدينة ==========================
+city = st.sidebar.selectbox("🏙️ اختر المدينة", ["Baghdad", "Babil"])
+TABLE_NAME = "voters_data" if city == "Baghdad" else "Babil"
 
-# ====== تبويبات ======
+st.title(f"📊 المراقب الذكي - البحث في سجلات الناخبين ({city})")
+
+# ====== التبويبات ======
 tab_browse, tab_single, tab_file, tab_ocr, tab_count = st.tabs(
     ["📄 تصفّح السجلات", "🔍 بحث برقم", "📂 رفع ملف Excel", "📸 OCR صور بطاقات", "📦 عدّ البطاقات"]
 )
@@ -111,7 +107,6 @@ with tab_browse:
         }
         st.session_state.page = 1
 
-    # --- بناء شروط البحث ---
     where_clauses, params = [], []
     if st.session_state.filters["voter"]:
         where_clauses.append('CAST(voter_no AS TEXT) ILIKE %s')
@@ -124,14 +119,13 @@ with tab_browse:
         params.append(f"%{st.session_state.filters['center']}%")
 
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-
-    count_sql = f'SELECT COUNT(*) FROM voters_data {where_sql};'
+    count_sql = f'SELECT COUNT(*) FROM "{TABLE_NAME}" {where_sql};'
     offset = (st.session_state.page - 1) * page_size
     data_sql = f'''
         SELECT
             voter_no, full_name, gender, phone, family_number,
             polling_center_name, polling_center_number, station_number
-        FROM voters_data
+        FROM "{TABLE_NAME}"
         {where_sql}
         ORDER BY voter_no ASC
         LIMIT %s OFFSET %s;
@@ -161,7 +155,6 @@ with tab_browse:
 
         total_pages = max(1, math.ceil(total_rows / page_size))
 
-        # ✅ عرض النتائج
         st.dataframe(df, use_container_width=True, height=500)
 
         c1, c2, c3 = st.columns([1,2,1])
@@ -175,7 +168,6 @@ with tab_browse:
             if st.button("التالي ➡️", disabled=(st.session_state.page >= total_pages)):
                 st.session_state.page += 1
                 st.experimental_rerun()
-
     except Exception as e:
         st.error(f"❌ خطأ أثناء التصفح: {e}")
 
@@ -188,10 +180,10 @@ with tab_single:
     if st.button("بحث"):
         try:
             conn = get_conn()
-            query = """
+            query = f"""
                 SELECT voter_no, full_name, gender, phone, family_number,
                        polling_center_name, polling_center_number, station_number
-                FROM voters_data WHERE voter_no = %s
+                FROM "{TABLE_NAME}" WHERE voter_no = %s
             """
             df = pd.read_sql_query(query, conn, params=(voter_input.strip(),))
             conn.close()
@@ -208,7 +200,6 @@ with tab_single:
                     "station_number": "رقم المحطة"
                 })
                 df["الجنس"] = df["الجنس"].apply(map_gender)
-
                 st.dataframe(df, use_container_width=True, height=500)
             else:
                 st.warning("⚠️ لم يتم العثور على نتائج")
@@ -216,7 +207,7 @@ with tab_single:
             st.error(f"❌ خطأ: {e}")
 
 # ----------------------------------------------------------------------------- #
-# 3) 📂 رفع ملف Excel (معدل مع الأرقام غير الموجودة)
+# 3) 📂 رفع ملف Excel
 # ----------------------------------------------------------------------------- #
 with tab_file:
     st.subheader("📂 البحث باستخدام ملف Excel")
@@ -232,7 +223,7 @@ with tab_file:
             query = f"""
                 SELECT voter_no, full_name, gender, phone, family_number,
                        polling_center_name, polling_center_number, station_number
-                FROM voters_data WHERE voter_no IN ({placeholders})
+                FROM "{TABLE_NAME}" WHERE voter_no IN ({placeholders})
             """
             df = pd.read_sql_query(query, conn, params=voters_list)
             conn.close()
@@ -254,14 +245,11 @@ with tab_file:
                          "رقم العائلة","مركز الاقتراع","رقم مركز الاقتراع",
                          "رقم المحطة","رقم المندوب الرئيسي","الحالة","ملاحظة"]]
 
-                # ✅ إيجاد الأرقام غير الموجودة
                 found_numbers = set(df["رقم الناخب"].astype(str).tolist())
                 missing_numbers = [num for num in voters_list if num not in found_numbers]
 
-                # عرض النتائج الموجودة
                 st.dataframe(df, use_container_width=True, height=500)
 
-                # ملف النتائج الموجودة
                 output_file = "نتائج_البحث.xlsx"
                 df.to_excel(output_file, index=False, engine="openpyxl")
                 wb = load_workbook(output_file)
@@ -272,21 +260,9 @@ with tab_file:
                         file_name="نتائج_البحث.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-                # عرض وتحميل الأرقام غير الموجودة
                 if missing_numbers:
-                    st.warning("⚠️ الأرقام التالية لم يتم العثور عليها في قاعدة البيانات:")
+                    st.warning("⚠️ الأرقام التالية لم يتم العثور عليها:")
                     st.write(missing_numbers)
-
-                    missing_df = pd.DataFrame(missing_numbers, columns=["الأرقام غير الموجودة"])
-                    miss_file = "missing_numbers.xlsx"
-                    missing_df.to_excel(miss_file, index=False, engine="openpyxl")
-                    with open(miss_file, "rb") as f:
-                        st.download_button("⬇️ تحميل الأرقام غير الموجودة", f,
-                            file_name="الأرقام_غير_الموجودة.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-            else:
-                st.warning("⚠️ لا يوجد نتائج")
         except Exception as e:
             st.error(f"❌ خطأ: {e}")
 # ----------------------------------------------------------------------------- #
@@ -295,10 +271,10 @@ with tab_file:
 with tab_ocr:
     st.subheader("📸 استخراج رقم الناخب من الصور")
 
-    # ---- قسم: استخراج الأرقام فقط (بدون البحث) ----
+    # ---- استخراج الأرقام فقط ----
     st.markdown("### 🔎 استخراج الأرقام فقط (بدون البحث في قاعدة البيانات)")
     imgs_only = st.file_uploader(
-        "📤 ارفع صور البطاقات (لاستخراج الأرقام فقط)",
+        "📤 ارفع صور البطاقات",
         type=["jpg","jpeg","png"],
         accept_multiple_files=True,
         key="ocr_only"
@@ -306,11 +282,9 @@ with tab_ocr:
     if imgs_only and st.button("🚀 استخراج الأرقام فقط"):
         client = setup_google_vision()
         if client is None:
-            st.error("❌ خطأ في إعداد Google Vision.")
+            st.error("❌ خطأ في Google Vision.")
         else:
-            clear_numbers = []
-            unclear_candidates = []
-            results = []
+            clear_numbers, unclear_candidates, results = [], [], []
 
             for img in imgs_only:
                 try:
@@ -321,7 +295,6 @@ with tab_ocr:
                     if texts:
                         full_text = texts[0].description
                         found_clear = re.findall(r"\b\d{6,10}\b", full_text)
-
                         if found_clear:
                             clear_numbers.extend(found_clear)
                             results.append({"filename": img.name, "content": img, "numbers": found_clear})
@@ -333,53 +306,41 @@ with tab_ocr:
                                 if 6 <= len(cleaned) <= 10:
                                     unclear_candidates.append({"original": cand, "cleaned": cleaned})
                 except Exception as e:
-                    st.warning(f"⚠️ خطأ أثناء معالجة صورة: {e}")
+                    st.warning(f"⚠️ خطأ في {img.name}: {e}")
 
             clear_numbers = list(dict.fromkeys(clear_numbers))
-            seen_cleaned = set()
-            uniq_unclear = []
+            seen_cleaned, uniq_unclear = set(), []
             for item in unclear_candidates:
                 if item["cleaned"] not in seen_cleaned and item["cleaned"] not in clear_numbers:
                     seen_cleaned.add(item["cleaned"])
                     uniq_unclear.append(item)
 
             if results:
-                st.markdown("### 🖼️ الصور التي تحتوي أرقام ناخب (مرفقة ✅):")
+                st.markdown("### 🖼️ الصور التي تحتوي أرقام ناخب:")
                 for r in results:
-                    numbers_str = ", ".join(r["numbers"])
-                    st.image(r["content"], caption=f"{r['filename']} — الأرقام: {numbers_str}", use_column_width=True)
+                    st.image(r["content"], caption=f"{r['filename']} — {', '.join(r['numbers'])}", use_column_width=True)
 
-            st.success("✅ الانتهاء من الاستخراج")
-            st.metric("الأرقام الواضحة المكتشفة", len(clear_numbers))
-            st.metric("الأرقام المشكوك فيها (غير واضحة)", len(uniq_unclear))
+            st.success("✅ تم الاستخراج")
+            st.metric("الأرقام الواضحة", len(clear_numbers))
+            st.metric("الأرقام المشكوك فيها", len(uniq_unclear))
 
             if clear_numbers:
-                st.markdown("**قائمة الأرقام الواضحة:**")
-                st.write(clear_numbers)
                 clear_df = pd.DataFrame(clear_numbers, columns=["الأرقام الواضحة"])
-                clear_file = "clear_numbers.xlsx"
-                clear_df.to_excel(clear_file, index=False, engine="openpyxl")
-                with open(clear_file, "rb") as f:
-                    st.download_button("⬇️ تحميل الأرقام الواضحة", f,
-                        file_name="الأرقام_الواضحة.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                clear_df.to_excel("clear_numbers.xlsx", index=False, engine="openpyxl")
+                with open("clear_numbers.xlsx", "rb") as f:
+                    st.download_button("⬇️ تحميل الأرقام الواضحة", f, file_name="الأرقام_الواضحة.xlsx")
 
             if uniq_unclear:
-                st.markdown("**قائمة الأرقام غير الواضحة (الأصلية → بعد التنظيف):**")
-                st.dataframe(uniq_unclear)
                 unclear_df = pd.DataFrame(uniq_unclear)
-                unclear_file = "unclear_numbers.xlsx"
-                unclear_df.to_excel(unclear_file, index=False, engine="openpyxl")
-                with open(unclear_file, "rb") as f:
-                    st.download_button("⬇️ تحميل الأرقام المشكوك فيها", f,
-                        file_name="الأرقام_المشكوك_فيها.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                unclear_df.to_excel("unclear_numbers.xlsx", index=False, engine="openpyxl")
+                with open("unclear_numbers.xlsx", "rb") as f:
+                    st.download_button("⬇️ تحميل الأرقام المشكوك فيها", f, file_name="الأرقام_المشكوك_فيها.xlsx")
 
     st.markdown("---")
 
-    # ---- قسم: استخراج + البحث في قاعدة البيانات ----
+    # ---- استخراج + البحث ----
     imgs = st.file_uploader(
-        "📤 ارفع صور البطاقات (للاستخراج والبحث في قاعدة البيانات)",
+        "📤 ارفع صور للبحث المباشر",
         type=["jpg","jpeg","png"],
         accept_multiple_files=True,
         key="ocr_search"
@@ -387,11 +348,9 @@ with tab_ocr:
     if imgs and st.button("🚀 استخراج والبحث"):
         client = setup_google_vision()
         if client is None:
-            st.error("❌ لم يتم تحميل مفتاح Google Vision بشكل صحيح.")
+            st.error("❌ لم يتم تحميل مفتاح Google Vision.")
         else:
-            all_voters = []
-            results = []
-
+            all_voters, results = [], []
             for img in imgs:
                 try:
                     content = img.read()
@@ -404,12 +363,12 @@ with tab_ocr:
                             all_voters.extend(numbers)
                             results.append({"filename": img.name, "content": img, "numbers": numbers})
                 except Exception as e:
-                    st.warning(f"⚠️ خطأ أثناء معالجة صورة: {e}")
+                    st.warning(f"⚠️ خطأ في {img.name}: {e}")
 
             if results:
-                st.markdown("### 🖼️ الصور التي تحتوي أرقام ناخب:")
+                st.markdown("### 🖼️ الصور التي تحتوي أرقام:")
                 for r in results:
-                    st.image(r["content"], caption=f"{r['filename']} — الأرقام: {', '.join(r['numbers'])}", use_column_width=True)
+                    st.image(r["content"], caption=f"{r['filename']} — {', '.join(r['numbers'])}", use_column_width=True)
 
             if all_voters:
                 try:
@@ -418,7 +377,7 @@ with tab_ocr:
                     query = f"""
                         SELECT voter_no, full_name, gender, phone, family_number,
                                polling_center_name, polling_center_number, station_number
-                        FROM voters_data WHERE voter_no IN ({placeholders})
+                        FROM "{TABLE_NAME}" WHERE voter_no IN ({placeholders})
                     """
                     df = pd.read_sql_query(query, conn, params=all_voters)
                     conn.close()
@@ -436,49 +395,36 @@ with tab_ocr:
                         df["الحالة"] = 0
                         df["ملاحظة"] = ""
 
-                        df = df[["رقم الناخب","الاسم","الجنس","رقم الهاتف",
-                                 "رقم العائلة","مركز الاقتراع","رقم مركز الاقتراع",
-                                 "رقم المحطة","رقم المندوب الرئيسي","الحالة","ملاحظة"]]
-
                         st.dataframe(df, use_container_width=True, height=500)
 
-                        output_file = "ocr_نتائج_البحث.xlsx"
-                        df.to_excel(output_file, index=False, engine="openpyxl")
-                        wb = load_workbook(output_file)
-                        wb.active.sheet_view.rightToLeft = True
-                        wb.save(output_file)
-                        with open(output_file, "rb") as f:
-                            st.download_button("⬇️ تحميل النتائج OCR", f,
-                                file_name="ocr_نتائج_البحث.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                        df.to_excel("ocr_results.xlsx", index=False, engine="openpyxl")
+                        with open("ocr_results.xlsx", "rb") as f:
+                            st.download_button("⬇️ تحميل النتائج OCR", f, file_name="ocr_نتائج.xlsx")
                     else:
                         st.warning("⚠️ لم يتم العثور على نتائج")
                 except Exception as e:
-                    st.error(f"❌ خطأ أثناء البحث في قاعدة البيانات: {e}")
+                    st.error(f"❌ خطأ أثناء البحث: {e}")
             else:
-                st.warning("⚠️ لم يتعرّف على أي أرقام في الصور")
+                st.warning("⚠️ لم يتم العثور على أرقام واضحة")
 
 # ----------------------------------------------------------------------------- #
-# 5) 📦 عدّ البطاقات (أرقام 8 خانات) + بحث في القاعدة + قائمة الأرقام غير الموجودة
+# 5) 📦 عدّ البطاقات (8 خانات) + الأرقام غير الموجودة
 # ----------------------------------------------------------------------------- #
 with tab_count:
-    st.subheader("📦 عدّ البطاقات (أرقام 8 خانات) — بحث في القاعدة + الأرقام غير الموجودة")
+    st.subheader("📦 عدّ البطاقات (8 خانات)")
 
     imgs_count = st.file_uploader(
-        "📤 ارفع صور الصفحات (قد تحتوي أكثر من بطاقة)",
+        "📤 ارفع صور الصفحات",
         type=["jpg","jpeg","png"],
         accept_multiple_files=True,
         key="ocr_count"
     )
-
     if imgs_count and st.button("🚀 عدّ البطاقات والبحث"):
         client = setup_google_vision()
         if client is None:
-            st.error("❌ خطأ في إعداد Google Vision.")
+            st.error("❌ خطأ في Google Vision.")
         else:
-            all_numbers = []               # قائمة بكل الأرقام الثمانية المكتشفة (مع التكرار)
-            number_to_files = {}           # خريطة: رقم -> مجموعة أسماء صور المصدر
-            details = []                   # تفاصيل لكل ملف للعرض/تحميل
+            all_numbers, number_to_files, details = [], {}, []
 
             for img in imgs_count:
                 try:
@@ -488,7 +434,6 @@ with tab_count:
                     texts = response.text_annotations
                     full_text = texts[0].description if texts else ""
 
-                    # استخراج أرقام مكونة من 8 خانات فقط
                     found_numbers = re.findall(r"\b\d{8}\b", full_text)
                     for n in found_numbers:
                         all_numbers.append(n)
@@ -496,21 +441,19 @@ with tab_count:
 
                     details.append({
                         "اسم الملف": img.name,
-                        "عدد البطاقات (أرقام 8 خانات)": len(found_numbers),
-                        "الأرقام المكتشفة (8 خانات فقط)": ", ".join(found_numbers) if found_numbers else "لا يوجد"
+                        "عدد البطاقات": len(found_numbers),
+                        "الأرقام": ", ".join(found_numbers) if found_numbers else "لا يوجد"
                     })
-
                 except Exception as e:
-                    st.warning(f"⚠️ خطأ أثناء معالجة صورة {img.name}: {e}")
+                    st.warning(f"⚠️ خطأ في {img.name}: {e}")
 
             total_cards = len(all_numbers)
-            unique_numbers = sorted(list(set(all_numbers)))
+            unique_numbers = sorted(set(all_numbers))
 
-            st.success("✅ تم الاستخراج الأولي للأرقام")
+            st.metric("إجمالي الأرقام", total_cards)
+            st.metric("الأرقام الفريدة", len(unique_numbers))
 
-            # ----------------- بحث في قاعدة البيانات عن الأرقام الموجودة -----------------
-            found_df = pd.DataFrame()
-            missing_list = []
+            found_df, missing_list = pd.DataFrame(), []
             if unique_numbers:
                 try:
                     conn = get_conn()
@@ -518,20 +461,16 @@ with tab_count:
                     query = f"""
                         SELECT voter_no, full_name, gender, phone, family_number,
                                polling_center_name, polling_center_number, station_number
-                        FROM voters_data WHERE voter_no IN ({placeholders})
+                        FROM "{TABLE_NAME}" WHERE voter_no IN ({placeholders})
                     """
                     found_df = pd.read_sql_query(query, conn, params=unique_numbers)
                     conn.close()
 
                     if not found_df.empty:
                         found_df = found_df.rename(columns={
-                            "voter_no": "رقم الناخب",
-                            "full_name": "الاسم",
-                            "gender": "الجنس",
-                            "phone": "رقم الهاتف",
-                            "family_number": "رقم العائلة",
-                            "polling_center_name": "مركز الاقتراع",
-                            "polling_center_number": "رقم مركز الاقتراع",
+                            "voter_no": "رقم الناخب","full_name": "الاسم","gender": "الجنس",
+                            "phone": "رقم الهاتف","family_number": "رقم العائلة",
+                            "polling_center_name": "مركز الاقتراع","polling_center_number": "رقم مركز الاقتراع",
                             "station_number": "رقم المحطة"
                         })
                         found_df["الجنس"] = found_df["الجنس"].apply(map_gender)
@@ -540,39 +479,25 @@ with tab_count:
                     for n in unique_numbers:
                         if n not in found_numbers_in_db:
                             files = sorted(list(number_to_files.get(n, [])))
-                            missing_list.append({"رقم_الناخب": n, "المصدر(الصور)": ", ".join(files)})
+                            missing_list.append({"رقم الناخب": n, "المصدر": ", ".join(files)})
                 except Exception as e:
-                    st.error(f"❌ خطأ أثناء البحث في قاعدة البيانات: {e}")
-            else:
-                st.info("ℹ️ لم يتم العثور على أي أرقام مكوّنة من 8 خانات في الصور المرفوعة.")
+                    st.error(f"❌ خطأ أثناء البحث: {e}")
 
-            # ----------------- عرض النتائج للمستخدم -----------------
-            st.markdown("### 📊 ملخص الاستخراج")
-            st.metric("إجمالي الأرقام (مع التكرار)", total_cards)
-            st.metric("إجمالي الأرقام الفريدة (8 خانات)", len(unique_numbers))
-            st.metric("عدد الصور المرفوعة", len(imgs_count))
-
-            st.markdown("### 🔎 بيانات الناخبين (الموجودة في قاعدة البيانات)")
+            st.markdown("### ✅ النتائج الموجودة")
             if not found_df.empty:
                 st.dataframe(found_df, use_container_width=True, height=400)
-                out_found = "found_voters.xlsx"
-                found_df.to_excel(out_found, index=False, engine="openpyxl")
-                with open(out_found, "rb") as f:
-                    st.download_button("⬇️ تحميل بيانات الناخبين الموجودة", f,
-                        file_name="بيانات_الناخبين_الموجودين.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                found_df.to_excel("found_voters.xlsx", index=False, engine="openpyxl")
+                with open("found_voters.xlsx", "rb") as f:
+                    st.download_button("⬇️ تحميل الموجودين", f, file_name="الموجودين.xlsx")
             else:
-                st.warning("⚠️ لم يتم العثور على أي مطابقات في قاعدة البيانات.")
+                st.warning("⚠️ لا يوجد نتائج")
 
-            st.markdown("### ❌ الأرقام غير الموجودة في القاعدة (مع اسم الصورة)")
+            st.markdown("### ❌ الأرقام غير الموجودة")
             if missing_list:
                 missing_df = pd.DataFrame(missing_list)
                 st.dataframe(missing_df, use_container_width=True)
-                miss_file = "missing_numbers_with_files.xlsx"
-                missing_df.to_excel(miss_file, index=False, engine="openpyxl")
-                with open(miss_file, "rb") as f:
-                    st.download_button("⬇️ تحميل الأرقام غير الموجودة مع المصدر", f,
-                        file_name="الأرقام_غير_الموجودة_مع_المصدر.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                missing_df.to_excel("missing_voters.xlsx", index=False, engine="openpyxl")
+                with open("missing_voters.xlsx", "rb") as f:
+                    st.download_button("⬇️ تحميل الغير موجودين", f, file_name="غير_موجودين.xlsx")
             else:
-                st.success("✅ لا توجد أرقام مفقودة (كل الأرقام الموجودة تم إيجادها في قاعدة البيانات).")
+                st.success("✅ كل الأرقام موجودة")
