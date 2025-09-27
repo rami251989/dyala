@@ -114,26 +114,26 @@ with tab_browse:
     # --- بناء شروط البحث ---
     where_clauses, params = [], []
     if st.session_state.filters["voter"]:
-        where_clauses.append('CAST(voter_no AS TEXT) ILIKE %s')
+        where_clauses.append('CAST("VoterNo" AS TEXT) ILIKE %s')
         params.append(f"%{st.session_state.filters['voter']}%")
     if st.session_state.filters["name"]:
-        where_clauses.append('full_name ILIKE %s')
+        where_clauses.append('"الاسم الثلاثي" ILIKE %s')
         params.append(f"%{st.session_state.filters['name']}%")
     if st.session_state.filters["center"]:
-        where_clauses.append('polling_center_name ILIKE %s')
+        where_clauses.append('"اسم مركز الاقتراع" ILIKE %s')
         params.append(f"%{st.session_state.filters['center']}%")
 
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
-    count_sql = f'SELECT COUNT(*) FROM voters_data {where_sql};'
+    count_sql = f'SELECT COUNT(*) FROM voters {where_sql};'
     offset = (st.session_state.page - 1) * page_size
     data_sql = f'''
         SELECT
-            voter_no, full_name, gender, phone, family_number,
-            polling_center_name, polling_center_number, station_number
-        FROM voters_data
+            "VoterNo","الاسم الثلاثي","الجنس","هاتف","رقم العائلة",
+            "اسم مركز الاقتراع","رقم مركز الاقتراع","رقم المحطة"
+        FROM voters
         {where_sql}
-        ORDER BY voter_no ASC
+        ORDER BY "VoterNo" ASC
         LIMIT %s OFFSET %s;
     '''
 
@@ -148,14 +148,14 @@ with tab_browse:
 
         if not df.empty:
             df = df.rename(columns={
-                "voter_no": "رقم الناخب",
-                "full_name": "الاسم",
-                "gender": "الجنس",
-                "phone": "رقم الهاتف",
-                "family_number": "رقم العائلة",
-                "polling_center_name": "مركز الاقتراع",
-                "polling_center_number": "رقم مركز الاقتراع",
-                "station_number": "رقم المحطة",
+                "VoterNo": "رقم الناخب",
+                "الاسم الثلاثي": "الاسم",
+                "الجنس": "الجنس",
+                "هاتف": "رقم الهاتف",
+                "رقم العائلة": "رقم العائلة",
+                "اسم مركز الاقتراع": "مركز الاقتراع",
+                "رقم مركز الاقتراع": "رقم مركز الاقتراع",
+                "رقم المحطة": "رقم المحطة",
             })
             df["الجنس"] = df["الجنس"].apply(map_gender)
 
@@ -189,23 +189,23 @@ with tab_single:
         try:
             conn = get_conn()
             query = """
-                SELECT voter_no, full_name, gender, phone, family_number,
-                       polling_center_name, polling_center_number, station_number
-                FROM voters_data WHERE voter_no = %s
+                SELECT "VoterNo","الاسم الثلاثي","الجنس","هاتف","رقم العائلة",
+                       "اسم مركز الاقتراع","رقم مركز الاقتراع","رقم المحطة"
+                FROM voters WHERE "VoterNo" = %s
             """
             df = pd.read_sql_query(query, conn, params=(voter_input.strip(),))
             conn.close()
 
             if not df.empty:
                 df = df.rename(columns={
-                    "voter_no": "رقم الناخب",
-                    "full_name": "الاسم",
-                    "gender": "الجنس",
-                    "phone": "رقم الهاتف",
-                    "family_number": "رقم العائلة",
-                    "polling_center_name": "مركز الاقتراع",
-                    "polling_center_number": "رقم مركز الاقتراع",
-                    "station_number": "رقم المحطة"
+                    "VoterNo": "رقم الناخب",
+                    "الاسم الثلاثي": "الاسم",
+                    "الجنس": "الجنس",
+                    "هاتف": "رقم الهاتف",
+                    "رقم العائلة": "رقم العائلة",
+                    "اسم مركز الاقتراع": "مركز الاقتراع",
+                    "رقم مركز الاقتراع": "رقم مركز الاقتراع",
+                    "رقم المحطة": "رقم محطة"
                 })
                 df["الجنس"] = df["الجنس"].apply(map_gender)
 
@@ -220,29 +220,29 @@ with tab_single:
 # ----------------------------------------------------------------------------- #
 with tab_file:
     st.subheader("📂 البحث باستخدام ملف Excel")
-    uploaded_file = st.file_uploader("📤 ارفع ملف (voter_no)", type=["xlsx"])
+    uploaded_file = st.file_uploader("📤 ارفع ملف (VoterNo)", type=["xlsx"])
     if uploaded_file and st.button("🚀 تشغيل البحث"):
         try:
             voters_df = pd.read_excel(uploaded_file, engine="openpyxl")
-            voter_col = "voter_no" if "voter_no" in voters_df.columns else "رقم الناخب"
+            voter_col = "VoterNo" if "VoterNo" in voters_df.columns else "رقم الناخب"
             voters_list = voters_df[voter_col].astype(str).tolist()
 
             conn = get_conn()
             placeholders = ",".join(["%s"] * len(voters_list))
             query = f"""
-                SELECT voter_no, full_name, gender, phone, family_number,
-                       polling_center_name, polling_center_number, station_number
-                FROM voters_data WHERE voter_no IN ({placeholders})
+                SELECT "VoterNo","الاسم الثلاثي","الجنس","هاتف","رقم العائلة",
+                       "اسم مركز الاقتراع","رقم مركز الاقتراع","رقم المحطة"
+                FROM voters WHERE "VoterNo" IN ({placeholders})
             """
             df = pd.read_sql_query(query, conn, params=voters_list)
             conn.close()
 
             if not df.empty:
                 df = df.rename(columns={
-                    "voter_no": "رقم الناخب","full_name": "الاسم","gender": "الجنس",
-                    "phone": "رقم الهاتف","family_number": "رقم العائلة",
-                    "polling_center_name": "مركز الاقتراع","polling_center_number": "رقم مركز الاقتراع",
-                    "station_number": "رقم المحطة"
+                    "VoterNo": "رقم الناخب","الاسم الثلاثي": "الاسم","الجنس": "الجنس",
+                    "هاتف": "رقم الهاتف","رقم العائلة": "رقم العائلة",
+                    "اسم مركز الاقتراع": "مركز الاقتراع","رقم مركز الاقتراع": "رقم مركز الاقتراع",
+                    "رقم المحطة": "رقم المحطة"
                 })
                 df["الجنس"] = df["الجنس"].apply(map_gender)
 
@@ -289,6 +289,7 @@ with tab_file:
                 st.warning("⚠️ لا يوجد نتائج")
         except Exception as e:
             st.error(f"❌ خطأ: {e}")
+
 # ----------------------------------------------------------------------------- #
 # 4) 📸 OCR صور بطاقات
 # ----------------------------------------------------------------------------- #
@@ -416,19 +417,19 @@ with tab_ocr:
                     conn = get_conn()
                     placeholders = ",".join(["%s"] * len(all_voters))
                     query = f"""
-                        SELECT voter_no, full_name, gender, phone, family_number,
-                               polling_center_name, polling_center_number, station_number
-                        FROM voters_data WHERE voter_no IN ({placeholders})
+                        SELECT "VoterNo","الاسم الثلاثي","الجنس","هاتف","رقم العائلة",
+                               "اسم مركز الاقتراع","رقم مركز الاقتراع","رقم المحطة"
+                        FROM voters WHERE "VoterNo" IN ({placeholders})
                     """
                     df = pd.read_sql_query(query, conn, params=all_voters)
                     conn.close()
 
                     if not df.empty:
                         df = df.rename(columns={
-                            "voter_no": "رقم الناخب","full_name": "الاسم","gender": "الجنس",
-                            "phone": "رقم الهاتف","family_number": "رقم العائلة",
-                            "polling_center_name": "مركز الاقتراع","polling_center_number": "رقم مركز الاقتراع",
-                            "station_number": "رقم المحطة"
+                            "VoterNo": "رقم الناخب","الاسم الثلاثي": "الاسم","الجنس": "الجنس",
+                            "هاتف": "رقم الهاتف","رقم العائلة": "رقم العائلة",
+                            "اسم مركز الاقتراع": "مركز الاقتراع","رقم مركز الاقتراع": "رقم مركز الاقتراع",
+                            "رقم المحطة": "رقم المحطة"
                         })
                         df["الجنس"] = df["الجنس"].apply(map_gender)
 
@@ -457,7 +458,6 @@ with tab_ocr:
                     st.error(f"❌ خطأ أثناء البحث في قاعدة البيانات: {e}")
             else:
                 st.warning("⚠️ لم يتعرّف على أي أرقام في الصور")
-
 # ----------------------------------------------------------------------------- #
 # 5) 📦 عدّ البطاقات (أرقام 8 خانات) + بحث في القاعدة + قائمة الأرقام غير الموجودة
 # ----------------------------------------------------------------------------- #
@@ -516,23 +516,23 @@ with tab_count:
                     conn = get_conn()
                     placeholders = ",".join(["%s"] * len(unique_numbers))
                     query = f"""
-                        SELECT voter_no, full_name, gender, phone, family_number,
-                               polling_center_name, polling_center_number, station_number
-                        FROM voters_data WHERE voter_no IN ({placeholders})
+                        SELECT "VoterNo","الاسم الثلاثي","الجنس","هاتف","رقم العائلة",
+                               "اسم مركز الاقتراع","رقم مركز الاقتراع","رقم المحطة"
+                        FROM voters WHERE "VoterNo" IN ({placeholders})
                     """
                     found_df = pd.read_sql_query(query, conn, params=unique_numbers)
                     conn.close()
 
                     if not found_df.empty:
                         found_df = found_df.rename(columns={
-                            "voter_no": "رقم الناخب",
-                            "full_name": "الاسم",
-                            "gender": "الجنس",
-                            "phone": "رقم الهاتف",
-                            "family_number": "رقم العائلة",
-                            "polling_center_name": "مركز الاقتراع",
-                            "polling_center_number": "رقم مركز الاقتراع",
-                            "station_number": "رقم المحطة"
+                            "VoterNo": "رقم الناخب",
+                            "الاسم الثلاثي": "الاسم",
+                            "الجنس": "الجنس",
+                            "هاتف": "رقم الهاتف",
+                            "رقم العائلة": "رقم العائلة",
+                            "اسم مركز الاقتراع": "مركز الاقتراع",
+                            "رقم مركز الاقتراع": "رقم مركز الاقتراع",
+                            "رقم المحطة": "رقم محطة"
                         })
                         found_df["الجنس"] = found_df["الجنس"].apply(map_gender)
 
