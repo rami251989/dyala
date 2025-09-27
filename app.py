@@ -8,11 +8,6 @@ from dotenv import load_dotenv
 from google.cloud import vision
 import re
 import base64
-import cv2
-import numpy as np
-from PIL import Image
-import io
-import tempfile
 
 # ---- الإعدادات العامة / البيئة ----
 load_dotenv()
@@ -52,7 +47,7 @@ def map_gender(x):
         val = int(float(x))
         return "أنثى" if val == 1 else "ذكر"
     except:
-        return "غير معروف"
+        return "ذكر"
 
 # ---- تسجيل الدخول ----
 def login():
@@ -72,129 +67,133 @@ if "logged_in" not in st.session_state:
 if not st.session_state.logged_in:
     login()
     st.stop()
-
 # ========================== الواجهة بعد تسجيل الدخول ==========================
 st.title("📊 المراقب الذكي - البحث في سجلات الناخبين")
 st.markdown("سيتم البحث في قواعد البيانات باستخدام الذكاء الاصطناعي 🤖")
 
-# 🔽 اختيار المدينة
-city = st.selectbox("🏙️ اختر المدينة", ["Bagdad", "Babil"])
-
-# نحفظها في السيشن ستايت عشان نستخدمها في كل التبويبات
-st.session_state.selected_city = city
-
-# نحدد اسم الجدول حسب المدينة المختارة
-table_name = f'"{city}"'
-# ====== تبويبات ======
-tab_single, tab_file, tab_ocr, tab_count = st.tabs(
-    ["🔍 بحث برقم", "📂 رفع ملف Excel", "📸 OCR صور بطاقات", "📦 عدّ البطاقات"]
+# ====== التبويبات ======
+tab_browse, tab_single, tab_file, tab_ocr, tab_count = st.tabs(
+    ["📄 تصفّح السجلات", "🔍 بحث برقم", "📂 رفع ملف Excel", "📸 OCR صور بطاقات", "📦 عدّ البطاقات"]
 )
 
 # ----------------------------------------------------------------------------- #
-# 📄 البحث مع فلاتر
+# 1) 📄 تصفّح السجلات
 # ----------------------------------------------------------------------------- #
 with tab_browse:
-    st.subheader("📄 البحث باستخدام الفلاتر")
+    st.subheader("📄 تصفّح السجلات مع فلاتر")
 
-    # فلاتر
-    col1, col2, col3 = st.columns(3)
+    if "page" not in st.session_state:
+        st.session_state.page = 1
+    if "filters" not in st.session_state:
+        st.session_state.filters = {"voter": "", "family": "", "phone": "", "gender": ""}
+
+    col1, col2, col3, col4 = st.columns([1,1,1,1])
     with col1:
-        voter_filter = st.text_input("🔢 رقم الناخب")
+        voter_filter = st.text_input("🔢 رقم الناخب:", value=st.session_state.filters["voter"])
     with col2:
-        phone_filter = st.text_input("📱 رقم الهاتف")
+        family_filter = st.text_input("👨‍👩‍👧‍👦 رقم العائلة:", value=st.session_state.filters["family"])
     with col3:
-        family_filter = st.text_input("👨‍👩‍👦 رقم العائلة")
-
-    col4, col5, col6 = st.columns(3)
+        phone_filter = st.text_input("📞 رقم الهاتف:", value=st.session_state.filters["phone"])
     with col4:
-        center_name_filter = st.selectbox("🏫 مركز الاقتراع", [""] + get_distinct_values("اسم مركز الاقتراع", table_name))
-    with col5:
-        center_no_filter = st.selectbox("🔢 رقم مركز الاقتراع", [""] + get_distinct_values("رقم مركز الاقتراع", table_name))
-    with col6:
-        gender_filter = st.selectbox("⚧ الجنس", ["", "ذكر", "أنثى"])
+        gender_filter = st.selectbox("⚧ الجنس:", ["", "ذكر", "أنثى"])
 
-    col7, col8 = st.columns(2)
-    with col7:
-        reg_center_filter = st.selectbox("🏛️ مركز التسجيل", [""] + get_distinct_values("اسم مركز التسجيل", table_name))
-    with col8:
-        reg_no_filter = st.selectbox("🔢 رقم مركز التسجيل", [""] + get_distinct_values("رقم مركز التسجيل", table_name))
+    page_size = st.selectbox("عدد الصفوف", [10, 20, 50, 100], index=1)
 
-    # زر تطبيق
     if st.button("🔎 تطبيق الفلاتر"):
-        where_clauses, params = [], []
+        st.session_state.filters = {
+            "voter": voter_filter.strip(),
+            "family": family_filter.strip(),
+            "phone": phone_filter.strip(),
+            "gender": gender_filter.strip(),
+        }
+        st.session_state.page = 1
 
-        if voter_filter.strip():
-            where_clauses.append('CAST("VoterNo" AS TEXT) ILIKE %s')
-            params.append(f"%{voter_filter.strip()}%")
-        if phone_filter.strip():
-            where_clauses.append('"هاتف" ILIKE %s')
-            params.append(f"%{phone_filter.strip()}%")
-        if family_filter.strip():
-            where_clauses.append('"رقم العائلة" ILIKE %s')
-            params.append(f"%{family_filter.strip()}%")
-        if center_name_filter:
-            where_clauses.append('"اسم مركز الاقتراع" = %s')
-            params.append(center_name_filter)
-        if center_no_filter:
-            where_clauses.append('"رقم مركز الاقتراع" = %s')
-            params.append(center_no_filter)
-        if reg_center_filter:
-            where_clauses.append('"اسم مركز التسجيل" = %s')
-            params.append(reg_center_filter)
-        if reg_no_filter:
-            where_clauses.append('"رقم مركز التسجيل" = %s')
-            params.append(reg_no_filter)
-        if gender_filter:
-            if gender_filter == "ذكر":
-                where_clauses.append('"الجنس" = 0')
-            elif gender_filter == "أنثى":
-                where_clauses.append('"الجنس" = 1')
+    # --- بناء شروط البحث ---
+    where_clauses, params = [], []
+    if st.session_state.filters["voter"]:
+        where_clauses.append('CAST("VoterNo" AS TEXT) ILIKE %s')
+        params.append(f"%{st.session_state.filters['voter']}%")
+    if st.session_state.filters["family"]:
+        where_clauses.append('CAST("رقم العائلة" AS TEXT) ILIKE %s')
+        params.append(f"%{st.session_state.filters['family']}%")
+    if st.session_state.filters["phone"]:
+        where_clauses.append('CAST("هاتف" AS TEXT) ILIKE %s')
+        params.append(f"%{st.session_state.filters['phone']}%")
+    if st.session_state.filters["gender"]:
+        if st.session_state.filters["gender"] == "أنثى":
+            where_clauses.append('"الجنس" = 1')
+        elif st.session_state.filters["gender"] == "ذكر":
+            where_clauses.append('"الجنس" = 0')
 
-        where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
-        query = f"""
-            SELECT 
-                "VoterNo" AS "رقم الناخب",
-                "الاسم الثلاثي" AS "الاسم",
-                "الجنس" AS "الجنس",
-                "هاتف" AS "رقم الهاتف",
-                "رقم العائلة" AS "رقم العائلة",
-                "اسم مركز الاقتراع" AS "مركز الاقتراع",
-                "رقم مركز الاقتراع" AS "رقم مركز الاقتراع",
-                "اسم مركز التسجيل" AS "مركز التسجيل",
-                "رقم مركز التسجيل" AS "رقم مركز التسجيل",
-                "رقم المحطة" AS "رقم المحطة"
-            FROM {table_name}
-            {where_sql}
-            LIMIT 200
-        """
-        try:
-            conn = get_conn()
-            df = pd.read_sql_query(query, conn, params=params)
-            conn.close()
+    count_sql = f'SELECT COUNT(*) FROM voters {where_sql};'
+    offset = (st.session_state.page - 1) * page_size
+    data_sql = f'''
+        SELECT
+            "VoterNo","الاسم الثلاثي","الجنس","هاتف","رقم العائلة",
+            "اسم مركز الاقتراع","رقم مركز الاقتراع","رقم المحطة"
+        FROM voters
+        {where_sql}
+        ORDER BY "VoterNo" ASC
+        LIMIT %s OFFSET %s;
+    '''
 
-            if not df.empty:
-                df["الجنس"] = df["الجنس"].apply(map_gender)
-                st.dataframe(df, use_container_width=True, height=500)
-            else:
-                st.warning("⚠️ لا توجد نتائج مطابقة")
-        except Exception as e:
-            st.error(f"❌ خطأ في الاستعلام: {e}")
+    try:
+        conn = get_conn()
+        with conn.cursor() as cur:
+            cur.execute(count_sql, params)
+            total_rows = cur.fetchone()[0]
 
+        df = pd.read_sql_query(data_sql, conn, params=params + [page_size, offset])
+        conn.close()
 
+        if not df.empty:
+            df = df.rename(columns={
+                "VoterNo": "رقم الناخب",
+                "الاسم الثلاثي": "الاسم",
+                "الجنس": "الجنس",
+                "هاتف": "رقم الهاتف",
+                "رقم العائلة": "رقم العائلة",
+                "اسم مركز الاقتراع": "مركز الاقتراع",
+                "رقم مركز الاقتراع": "رقم مركز الاقتراع",
+                "رقم المحطة": "رقم المحطة",
+            })
+            df["الجنس"] = df["الجنس"].apply(map_gender)
+
+        total_pages = max(1, math.ceil(total_rows / page_size))
+
+        # ✅ عرض النتائج
+        st.dataframe(df, use_container_width=True, height=500)
+
+        c1, c2, c3 = st.columns([1,2,1])
+        with c1:
+            if st.button("⬅️ السابق", disabled=(st.session_state.page <= 1)):
+                st.session_state.page -= 1
+                st.experimental_rerun()
+        with c2:
+            st.markdown(f"<div style='text-align:center;font-weight:bold'>صفحة {st.session_state.page} من {total_pages}</div>", unsafe_allow_html=True)
+        with c3:
+            if st.button("التالي ➡️", disabled=(st.session_state.page >= total_pages)):
+                st.session_state.page += 1
+                st.experimental_rerun()
+
+    except Exception as e:
+        st.error(f"❌ خطأ أثناء التصفح: {e}")
 # ----------------------------------------------------------------------------- #
-# 1) 🔍 البحث برقم واحد
+# 2) 🔍 البحث برقم واحد
 # ----------------------------------------------------------------------------- #
 with tab_single:
     st.subheader("🔍 البحث برقم الناخب")
     voter_input = st.text_input("ادخل رقم الناخب:")
+
     if st.button("بحث"):
         try:
             conn = get_conn()
-            query = f"""
+            query = """
                 SELECT "VoterNo","الاسم الثلاثي","الجنس","هاتف","رقم العائلة",
                        "اسم مركز الاقتراع","رقم مركز الاقتراع","رقم المحطة"
-                FROM {table_name} WHERE "VoterNo" = %s
+                FROM voters WHERE "VoterNo" = %s
             """
             df = pd.read_sql_query(query, conn, params=(voter_input.strip(),))
             conn.close()
@@ -217,13 +216,13 @@ with tab_single:
                 st.warning("⚠️ لم يتم العثور على نتائج")
         except Exception as e:
             st.error(f"❌ خطأ: {e}")
-
 # ----------------------------------------------------------------------------- #
-# 2) 📂 رفع ملف Excel (مع الأرقام غير الموجودة)
+# 3) 📂 رفع ملف Excel (البحث عن أرقام الناخبين)
 # ----------------------------------------------------------------------------- #
 with tab_file:
     st.subheader("📂 البحث باستخدام ملف Excel")
     uploaded_file = st.file_uploader("📤 ارفع ملف (VoterNo)", type=["xlsx"])
+
     if uploaded_file and st.button("🚀 تشغيل البحث"):
         try:
             voters_df = pd.read_excel(uploaded_file, engine="openpyxl")
@@ -235,27 +234,23 @@ with tab_file:
             query = f"""
                 SELECT "VoterNo","الاسم الثلاثي","الجنس","هاتف","رقم العائلة",
                        "اسم مركز الاقتراع","رقم مركز الاقتراع","رقم المحطة"
-                FROM {table_name} WHERE "VoterNo" IN ({placeholders})
+                FROM voters WHERE "VoterNo" IN ({placeholders})
             """
             df = pd.read_sql_query(query, conn, params=voters_list)
             conn.close()
 
             if not df.empty:
                 df = df.rename(columns={
-                    "VoterNo": "رقم الناخب","الاسم الثلاثي": "الاسم","الجنس": "الجنس",
-                    "هاتف": "رقم الهاتف","رقم العائلة": "رقم العائلة",
-                    "اسم مركز الاقتراع": "مركز الاقتراع","رقم مركز الاقتراع": "رقم مركز الاقتراع",
+                    "VoterNo": "رقم الناخب",
+                    "الاسم الثلاثي": "الاسم",
+                    "الجنس": "الجنس",
+                    "هاتف": "رقم الهاتف",
+                    "رقم العائلة": "رقم العائلة",
+                    "اسم مركز الاقتراع": "مركز الاقتراع",
+                    "رقم مركز الاقتراع": "رقم مركز الاقتراع",
                     "رقم المحطة": "رقم المحطة"
                 })
                 df["الجنس"] = df["الجنس"].apply(map_gender)
-
-                df["رقم المندوب الرئيسي"] = ""
-                df["الحالة"] = 0
-                df["ملاحظة"] = ""
-
-                df = df[["رقم الناخب","الاسم","الجنس","رقم الهاتف",
-                         "رقم العائلة","مركز الاقتراع","رقم مركز الاقتراع",
-                         "رقم المحطة","رقم المندوب الرئيسي","الحالة","ملاحظة"]]
 
                 # ✅ إيجاد الأرقام غير الموجودة
                 found_numbers = set(df["رقم الناخب"].astype(str).tolist())
@@ -293,7 +288,7 @@ with tab_file:
         except Exception as e:
             st.error(f"❌ خطأ: {e}")
 # ----------------------------------------------------------------------------- #
-# 3) 📸 OCR صور بطاقات
+# 4) 📸 OCR صور بطاقات
 # ----------------------------------------------------------------------------- #
 with tab_ocr:
     st.subheader("📸 استخراج رقم الناخب من الصور")
@@ -311,7 +306,9 @@ with tab_ocr:
         if client is None:
             st.error("❌ خطأ في إعداد Google Vision.")
         else:
-            clear_numbers, unclear_candidates, results = [], [], []
+            clear_numbers = []
+            unclear_candidates = []
+            results = []
 
             for img in imgs_only:
                 try:
@@ -337,14 +334,15 @@ with tab_ocr:
                     st.warning(f"⚠️ خطأ أثناء معالجة صورة: {e}")
 
             clear_numbers = list(dict.fromkeys(clear_numbers))
-            uniq_unclear, seen_cleaned = [], set()
+            seen_cleaned = set()
+            uniq_unclear = []
             for item in unclear_candidates:
                 if item["cleaned"] not in seen_cleaned and item["cleaned"] not in clear_numbers:
                     seen_cleaned.add(item["cleaned"])
                     uniq_unclear.append(item)
 
             if results:
-                st.markdown("### 🖼️ الصور التي تحتوي أرقام ناخب:")
+                st.markdown("### 🖼️ الصور التي تحتوي أرقام ناخب (مرفقة ✅):")
                 for r in results:
                     numbers_str = ", ".join(r["numbers"])
                     st.image(r["content"], caption=f"{r['filename']} — الأرقام: {numbers_str}", use_column_width=True)
@@ -354,6 +352,8 @@ with tab_ocr:
             st.metric("الأرقام المشكوك فيها (غير واضحة)", len(uniq_unclear))
 
             if clear_numbers:
+                st.markdown("**قائمة الأرقام الواضحة:**")
+                st.write(clear_numbers)
                 clear_df = pd.DataFrame(clear_numbers, columns=["الأرقام الواضحة"])
                 clear_file = "clear_numbers.xlsx"
                 clear_df.to_excel(clear_file, index=False, engine="openpyxl")
@@ -363,6 +363,8 @@ with tab_ocr:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
             if uniq_unclear:
+                st.markdown("**قائمة الأرقام غير الواضحة (الأصلية → بعد التنظيف):**")
+                st.dataframe(uniq_unclear)
                 unclear_df = pd.DataFrame(uniq_unclear)
                 unclear_file = "unclear_numbers.xlsx"
                 unclear_df.to_excel(unclear_file, index=False, engine="openpyxl")
@@ -385,7 +387,8 @@ with tab_ocr:
         if client is None:
             st.error("❌ لم يتم تحميل مفتاح Google Vision بشكل صحيح.")
         else:
-            all_voters, results = [], []
+            all_voters = []
+            results = []
 
             for img in imgs:
                 try:
@@ -413,16 +416,20 @@ with tab_ocr:
                     query = f"""
                         SELECT "VoterNo","الاسم الثلاثي","الجنس","هاتف","رقم العائلة",
                                "اسم مركز الاقتراع","رقم مركز الاقتراع","رقم المحطة"
-                        FROM {table_name} WHERE "VoterNo" IN ({placeholders})
+                        FROM voters WHERE "VoterNo" IN ({placeholders})
                     """
                     df = pd.read_sql_query(query, conn, params=all_voters)
                     conn.close()
 
                     if not df.empty:
                         df = df.rename(columns={
-                            "VoterNo": "رقم الناخب","الاسم الثلاثي": "الاسم","الجنس": "الجنس",
-                            "هاتف": "رقم الهاتف","رقم العائلة": "رقم العائلة",
-                            "اسم مركز الاقتراع": "مركز الاقتراع","رقم مركز الاقتراع": "رقم مركز الاقتراع",
+                            "VoterNo": "رقم الناخب",
+                            "الاسم الثلاثي": "الاسم",
+                            "الجنس": "الجنس",
+                            "هاتف": "رقم الهاتف",
+                            "رقم العائلة": "رقم العائلة",
+                            "اسم مركز الاقتراع": "مركز الاقتراع",
+                            "رقم مركز الاقتراع": "رقم مركز الاقتراع",
                             "رقم المحطة": "رقم المحطة"
                         })
                         df["الجنس"] = df["الجنس"].apply(map_gender)
@@ -444,9 +451,8 @@ with tab_ocr:
                     st.error(f"❌ خطأ أثناء البحث في قاعدة البيانات: {e}")
             else:
                 st.warning("⚠️ لم يتعرّف على أي أرقام في الصور")
-
 # ----------------------------------------------------------------------------- #
-# 4) 📦 عدّ البطاقات (أرقام 8 خانات) + بحث في القاعدة + قائمة الأرقام غير الموجودة
+# 5) 📦 عدّ البطاقات (أرقام 8 خانات) + بحث في القاعدة + قائمة الأرقام غير الموجودة
 # ----------------------------------------------------------------------------- #
 with tab_count:
     st.subheader("📦 عدّ البطاقات (أرقام 8 خانات) — بحث في القاعدة + الأرقام غير الموجودة")
@@ -463,7 +469,9 @@ with tab_count:
         if client is None:
             st.error("❌ خطأ في إعداد Google Vision.")
         else:
-            all_numbers, number_to_files, details = [], {}, []
+            all_numbers = []               # قائمة بكل الأرقام الثمانية المكتشفة (مع التكرار)
+            number_to_files = {}           # خريطة: رقم -> مجموعة أسماء صور المصدر
+            details = []                   # تفاصيل لكل ملف للعرض/تحميل
 
             for img in imgs_count:
                 try:
@@ -473,6 +481,7 @@ with tab_count:
                     texts = response.text_annotations
                     full_text = texts[0].description if texts else ""
 
+                    # استخراج أرقام مكونة من 8 خانات فقط
                     found_numbers = re.findall(r"\b\d{8}\b", full_text)
                     for n in found_numbers:
                         all_numbers.append(n)
@@ -483,6 +492,7 @@ with tab_count:
                         "عدد البطاقات (أرقام 8 خانات)": len(found_numbers),
                         "الأرقام المكتشفة (8 خانات فقط)": ", ".join(found_numbers) if found_numbers else "لا يوجد"
                     })
+
                 except Exception as e:
                     st.warning(f"⚠️ خطأ أثناء معالجة صورة {img.name}: {e}")
 
@@ -491,7 +501,9 @@ with tab_count:
 
             st.success("✅ تم الاستخراج الأولي للأرقام")
 
-            found_df, missing_list = pd.DataFrame(), []
+            # ----------------- بحث في قاعدة البيانات عن الأرقام الموجودة -----------------
+            found_df = pd.DataFrame()
+            missing_list = []
             if unique_numbers:
                 try:
                     conn = get_conn()
@@ -499,7 +511,7 @@ with tab_count:
                     query = f"""
                         SELECT "VoterNo","الاسم الثلاثي","الجنس","هاتف","رقم العائلة",
                                "اسم مركز الاقتراع","رقم مركز الاقتراع","رقم المحطة"
-                        FROM {table_name} WHERE "VoterNo" IN ({placeholders})
+                        FROM voters WHERE "VoterNo" IN ({placeholders})
                     """
                     found_df = pd.read_sql_query(query, conn, params=unique_numbers)
                     conn.close()
@@ -527,7 +539,7 @@ with tab_count:
             else:
                 st.info("ℹ️ لم يتم العثور على أي أرقام مكوّنة من 8 خانات في الصور المرفوعة.")
 
-            # ----------------- عرض النتائج -----------------
+            # ----------------- عرض النتائج للمستخدم -----------------
             st.markdown("### 📊 ملخص الاستخراج")
             st.metric("إجمالي الأرقام (مع التكرار)", total_cards)
             st.metric("إجمالي الأرقام الفريدة (8 خانات)", len(unique_numbers))
@@ -556,4 +568,4 @@ with tab_count:
                         file_name="الأرقام_غير_الموجودة_مع_المصدر.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             else:
-                st.success("✅ لا توجد أرقام مفقودة (كل الأرقام تم العثور عليها).")
+                st.success("✅ لا توجد أرقام مفقودة (كل الأرقام الموجودة تم إيجادها في قاعدة البيانات).")
