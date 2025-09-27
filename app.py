@@ -93,85 +93,108 @@ tab_browse, tab_single, tab_file, tab_ocr, tab_count = st.tabs(
 )
 
 # ----------------------------------------------------------------------------- #
-# 1) 📄 تصفّح السجلات
+# 📊 بحث متقدم عبر مراكز التسجيل / الاقتراع + فلاتر إضافية
 # ----------------------------------------------------------------------------- #
-with tab_browse:
-    st.subheader("📄 تصفّح السجلات مع فلاتر")
+tab_search, tab_single, tab_file, tab_ocr, tab_count = st.tabs(
+    ["🏫 بحث بالمراكز والفلاتر", "🔍 بحث برقم", "📂 رفع ملف Excel", "📸 OCR صور بطاقات", "📦 عدّ البطاقات"]
+)
 
-    if "page" not in st.session_state:
-        st.session_state.page = 1
-    if "filters" not in st.session_state:
-        st.session_state.filters = {"voter": "", "name": "", "center": ""}
-
-    colf1, colf2, colf3, colf4 = st.columns([1,1,1,1])
-    with colf1:
-        voter_filter = st.text_input("🔢 رقم الناخب:", value=st.session_state.filters["voter"])
-    with colf2:
-        name_filter = st.text_input("🧑‍💼 الاسم:", value=st.session_state.filters["name"])
-    with colf3:
-        center_filter = st.text_input("🏫 مركز الاقتراع:", value=st.session_state.filters["center"])
-    with colf4:
-        page_size = st.selectbox("عدد الصفوف", [10, 20, 50, 100], index=1)
-
-    if st.button("🔎 تطبيق الفلاتر"):
-        st.session_state.filters = {
-            "voter": voter_filter.strip(),
-            "name": name_filter.strip(),
-            "center": center_filter.strip(),
-        }
-        st.session_state.page = 1
-
-    # --- بناء شروط البحث ---
-    where_clauses, params = [], []
-    if st.session_state.filters["voter"]:
-        where_clauses.append('"رقم الناخب"::TEXT ILIKE %s')
-        params.append(f"%{st.session_state.filters['voter']}%")
-    if st.session_state.filters["name"]:
-        where_clauses.append('"الاسم الثلاثي" ILIKE %s')
-        params.append(f"%{st.session_state.filters['name']}%")
-    if st.session_state.filters["center"]:
-        where_clauses.append('"اسم مركز الاقتراع" ILIKE %s')
-        params.append(f"%{st.session_state.filters['center']}%")
-
-    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-    count_sql = f'SELECT COUNT(*) FROM "{TABLE_NAME}" {where_sql};'
-    offset = (st.session_state.page - 1) * page_size
-    data_sql = f'''
-        SELECT * FROM "{TABLE_NAME}"
-        {where_sql}
-        ORDER BY "رقم الناخب" ASC
-        LIMIT %s OFFSET %s;
-    '''
+with tab_search:
+    st.subheader("🏫 البحث حسب المراكز + فلاتر إضافية")
 
     try:
         conn = get_conn()
         with conn.cursor() as cur:
-            cur.execute(count_sql, params)
-            total_rows = cur.fetchone()[0]
+            # مراكز الاقتراع
+            cur.execute(f'SELECT DISTINCT "اسم مركز الاقتراع", "رقم مركز الاقتراع" FROM "{TABLE_NAME}" ORDER BY "اسم مركز الاقتراع";')
+            polling_centers = cur.fetchall()
 
-        df = pd.read_sql_query(data_sql, conn, params=params + [page_size, offset])
+            # مراكز التسجيل
+            cur.execute(f'SELECT DISTINCT "اسم مركز التسجيل", "رقم مركز التسجيل" FROM "{TABLE_NAME}" ORDER BY "اسم مركز التسجيل";')
+            registration_centers = cur.fetchall()
         conn.close()
 
-        if not df.empty:
-            df = rename_columns(df)
-            df["الجنس"] = df["gender"].apply(map_gender)
+        # ---- واجهة الفلاتر ----
+        col1, col2 = st.columns(2)
+        with col1:
+            selected_polling = st.selectbox(
+                "🏫 اختر مركز الاقتراع",
+                options=[""] + [f"{name} ({num})" for name, num in polling_centers],
+                index=0
+            )
+        with col2:
+            selected_registration = st.selectbox(
+                "📝 اختر مركز التسجيل",
+                options=[""] + [f"{name} ({num})" for name, num in registration_centers],
+                index=0
+            )
 
-        total_pages = max(1, math.ceil(total_rows / page_size))
-        st.dataframe(df, use_container_width=True, height=500)
+        colf1, colf2, colf3 = st.columns(3)
+        with colf1:
+            phone_filter = st.text_input("📱 رقم الهاتف")
+        with colf2:
+            family_filter = st.text_input("👨‍👩‍👧‍👦 رقم العائلة")
+        with colf3:
+            gender_filter = st.selectbox("⚧ الجنس", ["", "ذكر", "أنثى"])
 
-        c1, c2, c3 = st.columns([1,2,1])
-        with c1:
-            if st.button("⬅️ السابق", disabled=(st.session_state.page <= 1)):
-                st.session_state.page -= 1
-                st.experimental_rerun()
-        with c2:
-            st.markdown(f"<div style='text-align:center;font-weight:bold'>صفحة {st.session_state.page} من {total_pages}</div>", unsafe_allow_html=True)
-        with c3:
-            if st.button("التالي ➡️", disabled=(st.session_state.page >= total_pages)):
-                st.session_state.page += 1
-                st.experimental_rerun()
+        page_size = st.selectbox("عدد الصفوف", [10, 20, 50, 100], index=1)
+
+        if st.button("🔎 بحث"):
+            where_clauses, params = [], []
+
+            if selected_polling:
+                num = re.findall(r"\((\d+)\)", selected_polling)
+                if num:
+                    where_clauses.append('"رقم مركز الاقتراع" = %s')
+                    params.append(num[0])
+
+            if selected_registration:
+                num = re.findall(r"\((\d+)\)", selected_registration)
+                if num:
+                    where_clauses.append('"رقم مركز التسجيل" = %s')
+                    params.append(num[0])
+
+            if phone_filter.strip():
+                where_clauses.append('"هاتف" ILIKE %s')
+                params.append(f"%{phone_filter.strip()}%")
+
+            if family_filter.strip():
+                where_clauses.append('"رقم العائلة"::text ILIKE %s')
+                params.append(f"%{family_filter.strip()}%")
+
+            if gender_filter:
+                val = 1 if gender_filter == "أنثى" else 0
+                where_clauses.append('"الجنس" = %s')
+                params.append(val)
+
+            where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+            sql = f'''
+                SELECT "المدينة","رقم الناخب","الاسم الثلاثي","رقم العائلة",
+                       "رقم مركز التسجيل","اسم مركز التسجيل",
+                       "رقم مركز الاقتراع","اسم مركز الاقتراع",
+                       "الجنس","تاريخ الميلاد","هاتف"
+                FROM "{TABLE_NAME}"
+                {where_sql}
+                LIMIT %s;
+            '''
+            params.append(page_size)
+
+            conn = get_conn()
+            df = pd.read_sql_query(sql, conn, params=params)
+            conn.close()
+
+            if not df.empty:
+                # تحويل الجنس من 0/1 إلى نص
+                df["الجنس"] = df["الجنس"].apply(lambda x: "أنثى" if str(x) == "1" else "ذكر")
+
+                st.success(f"✅ تم العثور على {len(df)} سجل")
+                st.dataframe(df, use_container_width=True, height=500)
+            else:
+                st.warning("⚠️ لم يتم العثور على نتائج")
     except Exception as e:
-        st.error(f"❌ خطأ أثناء التصفح: {e}")
+        st.error(f"❌ خطأ: {e}")
+
 # ----------------------------------------------------------------------------- #
 # 2) 🔍 البحث برقم واحد
 # ----------------------------------------------------------------------------- #
