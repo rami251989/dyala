@@ -91,6 +91,98 @@ tab_single, tab_file, tab_ocr, tab_count = st.tabs(
 )
 
 # ----------------------------------------------------------------------------- #
+# 📄 البحث مع فلاتر
+# ----------------------------------------------------------------------------- #
+with tab_browse:
+    st.subheader("📄 البحث باستخدام الفلاتر")
+
+    # فلاتر
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        voter_filter = st.text_input("🔢 رقم الناخب")
+    with col2:
+        phone_filter = st.text_input("📱 رقم الهاتف")
+    with col3:
+        family_filter = st.text_input("👨‍👩‍👦 رقم العائلة")
+
+    col4, col5, col6 = st.columns(3)
+    with col4:
+        center_name_filter = st.selectbox("🏫 مركز الاقتراع", [""] + get_distinct_values("اسم مركز الاقتراع", table_name))
+    with col5:
+        center_no_filter = st.selectbox("🔢 رقم مركز الاقتراع", [""] + get_distinct_values("رقم مركز الاقتراع", table_name))
+    with col6:
+        gender_filter = st.selectbox("⚧ الجنس", ["", "ذكر", "أنثى"])
+
+    col7, col8 = st.columns(2)
+    with col7:
+        reg_center_filter = st.selectbox("🏛️ مركز التسجيل", [""] + get_distinct_values("اسم مركز التسجيل", table_name))
+    with col8:
+        reg_no_filter = st.selectbox("🔢 رقم مركز التسجيل", [""] + get_distinct_values("رقم مركز التسجيل", table_name))
+
+    # زر تطبيق
+    if st.button("🔎 تطبيق الفلاتر"):
+        where_clauses, params = [], []
+
+        if voter_filter.strip():
+            where_clauses.append('CAST("VoterNo" AS TEXT) ILIKE %s')
+            params.append(f"%{voter_filter.strip()}%")
+        if phone_filter.strip():
+            where_clauses.append('"هاتف" ILIKE %s')
+            params.append(f"%{phone_filter.strip()}%")
+        if family_filter.strip():
+            where_clauses.append('"رقم العائلة" ILIKE %s')
+            params.append(f"%{family_filter.strip()}%")
+        if center_name_filter:
+            where_clauses.append('"اسم مركز الاقتراع" = %s')
+            params.append(center_name_filter)
+        if center_no_filter:
+            where_clauses.append('"رقم مركز الاقتراع" = %s')
+            params.append(center_no_filter)
+        if reg_center_filter:
+            where_clauses.append('"اسم مركز التسجيل" = %s')
+            params.append(reg_center_filter)
+        if reg_no_filter:
+            where_clauses.append('"رقم مركز التسجيل" = %s')
+            params.append(reg_no_filter)
+        if gender_filter:
+            if gender_filter == "ذكر":
+                where_clauses.append('"الجنس" = 0')
+            elif gender_filter == "أنثى":
+                where_clauses.append('"الجنس" = 1')
+
+        where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+        query = f"""
+            SELECT 
+                "VoterNo" AS "رقم الناخب",
+                "الاسم الثلاثي" AS "الاسم",
+                "الجنس" AS "الجنس",
+                "هاتف" AS "رقم الهاتف",
+                "رقم العائلة" AS "رقم العائلة",
+                "اسم مركز الاقتراع" AS "مركز الاقتراع",
+                "رقم مركز الاقتراع" AS "رقم مركز الاقتراع",
+                "اسم مركز التسجيل" AS "مركز التسجيل",
+                "رقم مركز التسجيل" AS "رقم مركز التسجيل",
+                "رقم المحطة" AS "رقم المحطة"
+            FROM {table_name}
+            {where_sql}
+            LIMIT 200
+        """
+        try:
+            conn = get_conn()
+            df = pd.read_sql_query(query, conn, params=params)
+            conn.close()
+
+            if not df.empty:
+                df["الجنس"] = df["الجنس"].apply(map_gender)
+                st.dataframe(df, use_container_width=True, height=500)
+            else:
+                st.warning("⚠️ لا توجد نتائج مطابقة")
+        except Exception as e:
+            st.error(f"❌ خطأ في الاستعلام: {e}")
+
+
+# ----------------------------------------------------------------------------- #
 # 1) 🔍 البحث برقم واحد
 # ----------------------------------------------------------------------------- #
 with tab_single:
