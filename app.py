@@ -5,29 +5,16 @@ import streamlit as st
 import psycopg2
 from openpyxl import load_workbook
 from dotenv import load_dotenv
-from google.cloud import vision
-import re
 import base64
+import re
 
-# ---- الإعدادات العامة ----
+# ---- الإعدادات العامة / البيئة ----
 load_dotenv()
+
 USERNAME = "admin"
 PASSWORD = "Moraqip@123"
 
 st.set_page_config(page_title="المراقب الذكي", layout="wide")
-
-# ---- Google Vision ----
-def setup_google_vision():
-    try:
-        key_b64 = st.secrets["GOOGLE_VISION_KEY_B64"]
-        key_bytes = base64.b64decode(key_b64)
-        with open("google_vision.json", "wb") as f:
-            f.write(key_bytes)
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "google_vision.json"
-        return vision.ImageAnnotatorClient()
-    except Exception as e:
-        st.error(f"❌ لم يتم تحميل مفتاح Google Vision: {e}")
-        return None
 
 # ---- اتصال قاعدة البيانات ----
 def get_conn():
@@ -39,27 +26,6 @@ def get_conn():
         port=os.environ.get("DB_PORT"),
         sslmode=os.environ.get("DB_SSLMODE", "require")
     )
-
-# ---- تحويل الجنس ----
-def map_gender(x):
-    try:
-        val = int(float(x))
-        return "F" if val == 1 else "M"
-    except:
-        return "M"
-
-# ---- دالة لتغيير أسماء الأعمدة للعرض ----
-def rename_columns(df):
-    return df.rename(columns={
-        "رقم الناخب": "voter_no",
-        "الاسم الثلاثي": "full_name",
-        "الجنس": "gender",
-        "هاتف": "phone",
-        "رقم العائلة": "family_number",
-        "اسم مركز الاقتراع": "polling_center_name",
-        "رقم مركز الاقتراع": "polling_center_number",
-        "اسم مركز التسجيل": "station_number"
-    })
 
 # ---- تسجيل الدخول ----
 def login():
@@ -75,342 +41,239 @@ def login():
 
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
+
 if not st.session_state.logged_in:
     login()
     st.stop()
 
-# ---- اختيار المدينة ----
-st.sidebar.header("🌆 اختر المدينة")
-city = st.sidebar.selectbox("المدينة", ["Bagdad", "Babil"])
-TABLE_NAME = city
+# ========================== اختيار المدينة ==========================
+city = st.sidebar.selectbox("📍 اختر المدينة", ["Bagdad", "Babil"])
+table_name = f"\"{city}\""
 
-# ========================== الواجهة ==========================
-st.title("📊 المراقب الذكي - البحث في سجلات الناخبين")
-
+st.title(f"📊 المراقب الذكي - البحث في سجلات الناخبين ({city})")
 # ====== تبويبات ======
-tab_browse, tab_single, tab_file, tab_ocr, tab_count = st.tabs(
-    ["📄 تصفّح السجلات", "🔍 بحث برقم", "📂 رفع ملف Excel", "📸 OCR صور بطاقات", "📦 عدّ البطاقات"]
-)
-
-# ----------------------------------------------------------------------------- #
-# 📊 بحث متقدم عبر مراكز التسجيل / الاقتراع + فلاتر إضافية
-# ----------------------------------------------------------------------------- #
-tab_search, tab_single, tab_file, tab_ocr, tab_count = st.tabs(
+tab_centers, tab_single, tab_file, tab_ocr, tab_count = st.tabs(
     ["🏫 بحث بالمراكز والفلاتر", "🔍 بحث برقم", "📂 رفع ملف Excel", "📸 OCR صور بطاقات", "📦 عدّ البطاقات"]
 )
 
-with tab_search:
+# ----------------------------------------------------------------------------- #
+# 🏫 بحث بالمراكز والفلاتر
+# ----------------------------------------------------------------------------- #
+with tab_centers:
     st.subheader("🏫 البحث حسب المراكز + فلاتر إضافية")
 
     try:
         conn = get_conn()
-        with conn.cursor() as cur:
-            # مراكز الاقتراع
-            cur.execute(f'SELECT DISTINCT "اسم مركز الاقتراع", "رقم مركز الاقتراع" FROM "{TABLE_NAME}" ORDER BY "اسم مركز الاقتراع";')
-            polling_centers = cur.fetchall()
+        cur = conn.cursor()
 
-            # مراكز التسجيل
-            cur.execute(f'SELECT DISTINCT "اسم مركز التسجيل", "رقم مركز التسجيل" FROM "{TABLE_NAME}" ORDER BY "اسم مركز التسجيل";')
-            registration_centers = cur.fetchall()
+        # جلب القيم المميزة للمراكز
+        cur.execute(f'SELECT DISTINCT "اسم مركز الاقتراع" FROM {table_name} ORDER BY 1')
+        polling_centers = [r[0] for r in cur.fetchall() if r[0]]
+
+        cur.execute(f'SELECT DISTINCT "اسم مركز التسجيل" FROM {table_name} ORDER BY 1')
+        reg_centers = [r[0] for r in cur.fetchall() if r[0]]
+
         conn.close()
 
-        # ---- واجهة الفلاتر ----
-        col1, col2 = st.columns(2)
-        with col1:
-            selected_polling = st.selectbox(
-                "🏫 اختر مركز الاقتراع",
-                options=[""] + [f"{name} ({num})" for name, num in polling_centers],
-                index=0
-            )
-        with col2:
-            selected_registration = st.selectbox(
-                "📝 اختر مركز التسجيل",
-                options=[""] + [f"{name} ({num})" for name, num in registration_centers],
-                index=0
-            )
+        # DropDowns للمراكز
+        selected_polling = st.selectbox("🏫 اختر مركز الاقتراع", [""] + polling_centers)
+        selected_reg = st.selectbox("📝 اختر مركز التسجيل", [""] + reg_centers)
 
-        colf1, colf2, colf3 = st.columns(3)
-        with colf1:
-            phone_filter = st.text_input("📱 رقم الهاتف")
-        with colf2:
-            family_filter = st.text_input("👨‍👩‍👧‍👦 رقم العائلة")
-        with colf3:
-            gender_filter = st.selectbox("⚧ الجنس", ["", "ذكر", "أنثى"])
-
-        page_size = st.selectbox("عدد الصفوف", [10, 20, 50, 100], index=1)
+        # فلاتر إضافية
+        phone_filter = st.text_input("📞 رقم الهاتف يحتوي على:")
+        family_filter = st.text_input("👨‍👩‍👦 رقم العائلة:")
+        gender_filter = st.radio("⚧ الجنس", ["", "ذكر", "أنثى"], horizontal=True)
 
         if st.button("🔎 بحث"):
-            where_clauses, params = [], []
+            filters, params = [], []
 
             if selected_polling:
-                num = re.findall(r"\((\d+)\)", selected_polling)
-                if num:
-                    where_clauses.append('"رقم مركز الاقتراع" = %s')
-                    params.append(num[0])
-
-            if selected_registration:
-                num = re.findall(r"\((\d+)\)", selected_registration)
-                if num:
-                    where_clauses.append('"رقم مركز التسجيل" = %s')
-                    params.append(num[0])
-
-            if phone_filter.strip():
-                where_clauses.append('"هاتف" ILIKE %s')
-                params.append(f"%{phone_filter.strip()}%")
-
-            if family_filter.strip():
-                where_clauses.append('"رقم العائلة"::text ILIKE %s')
-                params.append(f"%{family_filter.strip()}%")
-
+                filters.append('"اسم مركز الاقتراع" = %s')
+                params.append(selected_polling)
+            if selected_reg:
+                filters.append('"اسم مركز التسجيل" = %s')
+                params.append(selected_reg)
+            if phone_filter:
+                filters.append('"هاتف" ILIKE %s')
+                params.append(f"%{phone_filter}%")
+            if family_filter:
+                filters.append('"رقم العائلة"::TEXT ILIKE %s')
+                params.append(f"%{family_filter}%")
             if gender_filter:
-                val = 1 if gender_filter == "أنثى" else 0
-                where_clauses.append('"الجنس" = %s')
-                params.append(val)
+                if gender_filter == "أنثى":
+                    filters.append('"الجنس" = 1')
+                elif gender_filter == "ذكر":
+                    filters.append('"الجنس" = 0')
 
-            where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+            where_sql = f"WHERE {' AND '.join(filters)}" if filters else ""
 
-            sql = f'''
-                SELECT "المدينة","رقم الناخب","الاسم الثلاثي","رقم العائلة",
-                       "رقم مركز التسجيل","اسم مركز التسجيل",
-                       "رقم مركز الاقتراع","اسم مركز الاقتراع",
-                       "الجنس","تاريخ الميلاد","هاتف"
-                FROM "{TABLE_NAME}"
+            query = f"""
+                SELECT
+                    "المدينة", "رقم الناخب", "الاسم الثلاثي", "رقم العائلة",
+                    "رقم مركز التسجيل", "اسم مركز التسجيل",
+                    "رقم مركز الاقتراع", "اسم مركز الاقتراع",
+                    "الجنس", "تاريخ الميلاد", "هاتف"
+                FROM {table_name}
                 {where_sql}
-                LIMIT %s;
-            '''
-            params.append(page_size)
+                LIMIT 200;
+            """
 
             conn = get_conn()
-            df = pd.read_sql_query(sql, conn, params=params)
+            df = pd.read_sql_query(query, conn, params=params)
             conn.close()
 
             if not df.empty:
-                # تحويل الجنس من 0/1 إلى نص
                 df["الجنس"] = df["الجنس"].apply(lambda x: "أنثى" if str(x) == "1" else "ذكر")
-
-                st.success(f"✅ تم العثور على {len(df)} سجل")
                 st.dataframe(df, use_container_width=True, height=500)
             else:
-                st.warning("⚠️ لم يتم العثور على نتائج")
+                st.warning("⚠️ لا توجد نتائج تطابق الفلاتر")
     except Exception as e:
-        st.error(f"❌ خطأ: {e}")
-
+        st.error(f"❌ خطأ أثناء تحميل المراكز: {e}")
 # ----------------------------------------------------------------------------- #
-# 2) 🔍 البحث برقم واحد
+# 🔍 البحث برقم الناخب
 # ----------------------------------------------------------------------------- #
 with tab_single:
     st.subheader("🔍 البحث برقم الناخب")
-    voter_input = st.text_input("ادخل رقم الناخب:")
-    if st.button("بحث"):
-        try:
-            conn = get_conn()
-            query = f"""
-                SELECT * FROM "{TABLE_NAME}" WHERE "رقم الناخب" = %s
-            """
-            df = pd.read_sql_query(query, conn, params=(voter_input.strip(),))
-            conn.close()
 
-            if not df.empty:
-                df = rename_columns(df)
-                df["الجنس"] = df["gender"].apply(map_gender)
-                st.dataframe(df, use_container_width=True, height=500)
-            else:
-                st.warning("⚠️ لم يتم العثور على نتائج")
-        except Exception as e:
-            st.error(f"❌ خطأ: {e}")
+    voter_no = st.text_input("🆔 أدخل رقم الناخب")
 
-# ----------------------------------------------------------------------------- #
-# 3) 📂 رفع ملف Excel (مع إيجاد الأرقام غير الموجودة)
-# ----------------------------------------------------------------------------- #
-with tab_file:
-    st.subheader("📂 البحث باستخدام ملف Excel")
-    uploaded_file = st.file_uploader("📤 ارفع ملف (رقم الناخب)", type=["xlsx"])
-    if uploaded_file and st.button("🚀 تشغيل البحث"):
-        try:
-            voters_df = pd.read_excel(uploaded_file, engine="openpyxl")
-            voter_col = "رقم الناخب" if "رقم الناخب" in voters_df.columns else voters_df.columns[0]
-            voters_list = voters_df[voter_col].astype(str).tolist()
+    if st.button("بحث برقم", key="btn_voter"):
+        if voter_no.strip():
+            try:
+                query = f"""
+                    SELECT
+                        "المدينة", "رقم الناخب", "الاسم الثلاثي", "رقم العائلة",
+                        "رقم مركز التسجيل", "اسم مركز التسجيل",
+                        "رقم مركز الاقتراع", "اسم مركز الاقتراع",
+                        "الجنس", "تاريخ الميلاد", "هاتف"
+                    FROM {table_name}
+                    WHERE "رقم الناخب"::TEXT = %s
+                    LIMIT 1;
+                """
 
-            conn = get_conn()
-            placeholders = ",".join(["%s"] * len(voters_list))
-            query = f"""
-                SELECT * FROM "{TABLE_NAME}" WHERE "رقم الناخب" IN ({placeholders})
-            """
-            df = pd.read_sql_query(query, conn, params=voters_list)
-            conn.close()
-
-            if not df.empty:
-                df = rename_columns(df)
-                df["الجنس"] = df["gender"].apply(map_gender)
-
-                df["رقم المندوب الرئيسي"] = ""
-                df["الحالة"] = 0
-                df["ملاحظة"] = ""
-
-                # ✅ ترتيب الأعمدة للعرض
-                df = df[["voter_no","full_name","gender","phone",
-                         "family_number","polling_center_name","polling_center_number",
-                         "station_number","رقم المندوب الرئيسي","الحالة","ملاحظة"]]
-
-                # ✅ إيجاد الأرقام غير الموجودة
-                found_numbers = set(df["voter_no"].astype(str).tolist())
-                missing_numbers = [num for num in voters_list if num not in found_numbers]
-
-                # عرض النتائج الموجودة
-                st.dataframe(df, use_container_width=True, height=500)
-
-                # ملف النتائج الموجودة
-                output_file = "نتائج_البحث.xlsx"
-                df.to_excel(output_file, index=False, engine="openpyxl")
-                wb = load_workbook(output_file)
-                wb.active.sheet_view.rightToLeft = True
-                wb.save(output_file)
-                with open(output_file, "rb") as f:
-                    st.download_button("⬇️ تحميل النتائج", f,
-                        file_name="نتائج_البحث.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-                # عرض وتحميل الأرقام غير الموجودة
-                if missing_numbers:
-                    st.warning("⚠️ الأرقام التالية لم يتم العثور عليها في قاعدة البيانات:")
-                    st.write(missing_numbers)
-
-                    missing_df = pd.DataFrame(missing_numbers, columns=["الأرقام غير الموجودة"])
-                    miss_file = "missing_numbers.xlsx"
-                    missing_df.to_excel(miss_file, index=False, engine="openpyxl")
-                    with open(miss_file, "rb") as f:
-                        st.download_button("⬇️ تحميل الأرقام غير الموجودة", f,
-                            file_name="الأرقام_غير_الموجودة.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-            else:
-                st.warning("⚠️ لا يوجد نتائج")
-        except Exception as e:
-            st.error(f"❌ خطأ: {e}")
-# ----------------------------------------------------------------------------- #
-# 4) 📸 OCR صور بطاقات
-# ----------------------------------------------------------------------------- #
-with tab_ocr:
-    st.subheader("📸 استخراج رقم الناخب من الصور")
-
-    # ---- استخراج الأرقام فقط ----
-    st.markdown("### 🔎 استخراج الأرقام فقط (بدون البحث في قاعدة البيانات)")
-    imgs_only = st.file_uploader(
-        "📤 ارفع صور البطاقات",
-        type=["jpg","jpeg","png"],
-        accept_multiple_files=True,
-        key="ocr_only"
-    )
-    if imgs_only and st.button("🚀 استخراج الأرقام فقط"):
-        client = setup_google_vision()
-        if client:
-            clear_numbers, unclear_candidates, results = [], [], []
-
-            for img in imgs_only:
-                try:
-                    content = img.read()
-                    image = vision.Image(content=content)
-                    response = client.text_detection(image=image)
-                    texts = response.text_annotations
-                    if texts:
-                        full_text = texts[0].description
-                        found_clear = re.findall(r"\b\d{6,10}\b", full_text)
-                        if found_clear:
-                            clear_numbers.extend(found_clear)
-                            results.append({"filename": img.name, "content": img, "numbers": found_clear})
-                except Exception as e:
-                    st.warning(f"⚠️ خطأ في {img.name}: {e}")
-
-            clear_numbers = list(dict.fromkeys(clear_numbers))
-            if clear_numbers:
-                st.success("✅ تم استخراج الأرقام")
-                st.write(clear_numbers)
-
-# ---- استخراج والبحث ----
-    imgs = st.file_uploader(
-        "📤 ارفع صور البطاقات (للاستخراج + البحث في القاعدة)",
-        type=["jpg","jpeg","png"],
-        accept_multiple_files=True,
-        key="ocr_search"
-    )
-    if imgs and st.button("🚀 استخراج والبحث"):
-        client = setup_google_vision()
-        if client:
-            all_voters, results = [], []
-            for img in imgs:
-                try:
-                    content = img.read()
-                    image = vision.Image(content=content)
-                    response = client.text_detection(image=image)
-                    texts = response.text_annotations
-                    if texts:
-                        numbers = re.findall(r"\b\d{6,10}\b", texts[0].description)
-                        if numbers:
-                            all_voters.extend(numbers)
-                            results.append({"filename": img.name, "content": img, "numbers": numbers})
-                except Exception as e:
-                    st.warning(f"⚠️ خطأ في {img.name}: {e}")
-
-            if all_voters:
                 conn = get_conn()
-                placeholders = ",".join(["%s"] * len(all_voters))
-                query = f"""SELECT * FROM "{TABLE_NAME}" WHERE "رقم الناخب" IN ({placeholders})"""
-                df = pd.read_sql_query(query, conn, params=all_voters)
+                df = pd.read_sql_query(query, conn, params=[voter_no.strip()])
                 conn.close()
 
                 if not df.empty:
-                    df = rename_columns(df)
-                    df["الجنس"] = df["gender"].apply(map_gender)
-                    st.dataframe(df, use_container_width=True, height=500)
+                    df["الجنس"] = df["الجنس"].apply(lambda x: "أنثى" if str(x) == "1" else "ذكر")
+                    st.table(df)
                 else:
-                    st.warning("⚠️ لا توجد نتائج")
-
+                    st.warning("⚠️ لم يتم العثور على الناخب")
+            except Exception as e:
+                st.error(f"❌ خطأ أثناء البحث: {e}")
+        else:
+            st.warning("⚠️ الرجاء إدخال رقم الناخب")
 # ----------------------------------------------------------------------------- #
-# 5) 📦 عدّ البطاقات (أرقام 8 خانات) + بحث في القاعدة
+# 📂 رفع ملف Excel للبحث برقم الناخب
 # ----------------------------------------------------------------------------- #
-with tab_count:
-    st.subheader("📦 عدّ البطاقات (أرقام 8 خانات) — بحث في القاعدة")
+with tab_file:
+    st.subheader("📂 رفع ملف Excel للبحث عن الناخبين")
 
-    imgs_count = st.file_uploader(
-        "📤 ارفع صور الصفحات (قد تحتوي عدة بطاقات)",
-        type=["jpg","jpeg","png"],
-        accept_multiple_files=True,
-        key="ocr_count"
-    )
+    uploaded_file = st.file_uploader("📥 اختر ملف Excel يحتوي على أرقام الناخبين", type=["xlsx"])
 
-    if imgs_count and st.button("🚀 عدّ البطاقات والبحث"):
-        client = setup_google_vision()
-        if client:
-            all_numbers, number_to_files = [], {}
-            for img in imgs_count:
-                try:
-                    content = img.read()
-                    image = vision.Image(content=content)
-                    response = client.text_detection(image=image)
-                    texts = response.text_annotations
-                    full_text = texts[0].description if texts else ""
-                    found_numbers = re.findall(r"\b\d{8}\b", full_text)
-                    for n in found_numbers:
-                        all_numbers.append(n)
-                        number_to_files.setdefault(n, set()).add(img.name)
-                except Exception as e:
-                    st.warning(f"⚠️ خطأ في {img.name}: {e}")
+    if uploaded_file is not None:
+        try:
+            excel_data = pd.read_excel(uploaded_file)
+            if "رقم الناخب" not in excel_data.columns:
+                st.error("❌ ملف Excel يجب أن يحتوي على عمود باسم (رقم الناخب)")
+            else:
+                voter_numbers = excel_data["رقم الناخب"].astype(str).tolist()
 
-            unique_numbers = sorted(set(all_numbers))
-            if unique_numbers:
+                query = f"""
+                    SELECT
+                        "المدينة", "رقم الناخب", "الاسم الثلاثي", "رقم العائلة",
+                        "رقم مركز التسجيل", "اسم مركز التسجيل",
+                        "رقم مركز الاقتراع", "اسم مركز الاقتراع",
+                        "الجنس", "تاريخ الميلاد", "هاتف"
+                    FROM {table_name}
+                    WHERE "رقم الناخب"::TEXT = ANY(%s)
+                """
+
                 conn = get_conn()
-                placeholders = ",".join(["%s"] * len(unique_numbers))
-                query = f"""SELECT * FROM "{TABLE_NAME}" WHERE "رقم الناخب" IN ({placeholders})"""
-                found_df = pd.read_sql_query(query, conn, params=unique_numbers)
+                df = pd.read_sql_query(query, conn, params=[voter_numbers])
                 conn.close()
 
-                if not found_df.empty:
-                    found_df = rename_columns(found_df)
-                    found_df["الجنس"] = found_df["gender"].apply(map_gender)
-                    st.dataframe(found_df, use_container_width=True, height=400)
+                if not df.empty:
+                    df["الجنس"] = df["الجنس"].apply(lambda x: "أنثى" if str(x) == "1" else "ذكر")
+                    st.dataframe(df, use_container_width=True, height=500)
 
-                # الأرقام المفقودة
-                found_numbers_set = set(found_df["voter_no"].astype(str)) if not found_df.empty else set()
-                missing = [n for n in unique_numbers if n not in found_numbers_set]
-                if missing:
-                    st.warning("⚠️ أرقام غير موجودة:")
-                    st.write(missing)
+                    # تحميل النتائج كـ Excel
+                    def convert_df(df):
+                        return df.to_csv(index=False).encode("utf-8-sig")
+
+                    st.download_button(
+                        "⬇️ تحميل النتائج كملف CSV",
+                        convert_df(df),
+                        "results.csv",
+                        "text/csv",
+                        key="download-csv"
+                    )
+                else:
+                    st.warning("⚠️ لم يتم العثور على أي نتائج")
+        except Exception as e:
+            st.error(f"❌ خطأ أثناء معالجة الملف: {e}")
+# ----------------------------------------------------------------------------- #
+# 📸 OCR صور بطاقات
+# ----------------------------------------------------------------------------- #
+with tab_ocr:
+    st.subheader("📸 البحث عبر OCR من صورة بطاقة")
+
+    ocr_file = st.file_uploader("📥 ارفع صورة البطاقة", type=["png", "jpg", "jpeg"])
+
+    if ocr_file is not None:
+        # ⚠️ هنا بدك تضيف دالة OCR حقيقية (Tesseract أو API خارجي)
+        # أنا رح أعمل محاكاة: نستخرج رقم من اسم الملف فقط
+        extracted_number = re.sub(r"\D", "", ocr_file.name)
+
+        if extracted_number:
+            st.info(f"🔍 تم استخراج رقم الناخب: {extracted_number}")
+
+            query = f"""
+                SELECT
+                    "المدينة", "رقم الناخب", "الاسم الثلاثي", "رقم العائلة",
+                    "رقم مركز التسجيل", "اسم مركز التسجيل",
+                    "رقم مركز الاقتراع", "اسم مركز الاقتراع",
+                    "الجنس", "تاريخ الميلاد", "هاتف"
+                FROM {table_name}
+                WHERE "رقم الناخب"::TEXT = %s
+                LIMIT 1;
+            """
+
+            conn = get_conn()
+            df = pd.read_sql_query(query, conn, params=[extracted_number])
+            conn.close()
+
+            if not df.empty:
+                df["الجنس"] = df["الجنس"].apply(lambda x: "أنثى" if str(x) == "1" else "ذكر")
+                st.table(df)
+            else:
+                st.warning("⚠️ لم يتم العثور على الناخب")
+        else:
+            st.error("❌ لم يتم التعرف على رقم الناخب من الصورة")
+# ----------------------------------------------------------------------------- #
+# 📦 عدّ البطاقات
+# ----------------------------------------------------------------------------- #
+with tab_count:
+    st.subheader("📦 إحصائيات الناخبين")
+
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+
+        cur.execute(f"SELECT COUNT(*) FROM {table_name}")
+        total = cur.fetchone()[0]
+
+        cur.execute(f"SELECT COUNT(*) FROM {table_name} WHERE \"الجنس\" = 1")
+        females = cur.fetchone()[0]
+
+        cur.execute(f"SELECT COUNT(*) FROM {table_name} WHERE \"الجنس\" = 0")
+        males = cur.fetchone()[0]
+
+        conn.close()
+
+        st.metric("👥 إجمالي الناخبين", total)
+        st.metric("👩 عدد الإناث", females)
+        st.metric("👨 عدد الذكور", males)
+    except Exception as e:
+        st.error(f"❌ خطأ أثناء جلب الإحصائيات: {e}")
