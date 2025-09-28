@@ -194,7 +194,7 @@ with tab_single:
                 SELECT "رقم الناخب","الاسم الثلاثي","الجنس","هاتف","رقم العائلة",
                        "اسم مركز الاقتراع","رقم مركز الاقتراع",
                        "المدينة","رقم مركز التسجيل","اسم مركز التسجيل","تاريخ الميلاد"
-                FROM "Bagdad" WHERE "رقم الناخب" = %s
+                FROM "Bagdad" WHERE "رقم الناخب" LIKE %s
             """
             df = pd.read_sql_query(query, conn, params=(voter_input.strip(),))
             conn.close()
