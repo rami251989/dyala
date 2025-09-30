@@ -53,66 +53,70 @@ def map_gender(x):
         return "F" if val == 1 else "M"
     except:
         return "M"
-
 # ---- تسجيل الدخول ----
 # ---- تسجيل الدخول ----
 def login():
-    # CSS لتوسيط وتجميل واجهة تسجيل الدخول
     st.markdown(
         """
         <style>
         .login-container {
             display: flex;
             justify-content: center;
-            align-items: center;
-            height: 80vh;
+            align-items: flex-start; /* يرفع الصندوق لفوق */
+            height: 100vh;
+            padding-top: 10vh;       /* مسافة من فوق */
         }
         .login-box {
             background: #ffffff;
-            padding: 2rem 3rem;
-            border-radius: 15px;
-            box-shadow: 0px 4px 20px rgba(0,0,0,0.1);
+            padding: 1.5rem 2rem;
+            border-radius: 12px;
+            box-shadow: 0px 2px 12px rgba(0,0,0,0.1);
             text-align: center;
-            width: 350px;
+            width: 300px;
         }
         .stTextInput>div>div>input {
             text-align: center;
+            font-size: 14px;
+            height: 35px;
         }
         .stButton button {
             background: linear-gradient(90deg, #4e73df, #1cc88a);
             color: white;
-            border-radius: 8px;
-            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            padding: 0.4rem 0.8rem;
+            font-size: 14px;
             font-weight: bold;
-            transition: 0.3s;
+            transition: 0.2s;
+            width: 100%;
         }
         .stButton button:hover {
             background: linear-gradient(90deg, #1cc88a, #4e73df);
-            transform: scale(1.05);
+            transform: scale(1.02);
         }
         </style>
         """,
         unsafe_allow_html=True
     )
 
-    # صندوق تسجيل الدخول
     st.markdown('<div class="login-container"><div class="login-box">', unsafe_allow_html=True)
-    st.markdown("## 🔑 تسجيل الدخول")
 
+    st.markdown("### 🔑 تسجيل الدخول")
     u = st.text_input("👤 اسم المستخدم", key="login_user")
     p = st.text_input("🔒 كلمة المرور", type="password", key="login_pass")
 
-    if st.button("🚀 دخول", key="login_btn"):
+    # ✅ كبسة واحدة تكفي
+    login_btn = st.button("🚀 دخول", key="login_btn")
+    if login_btn:
         if u == USERNAME and p == PASSWORD:
             st.session_state.logged_in = True
-            st.experimental_rerun()   # 🔑 إعادة تحميل الصفحة بعد تسجيل الدخول
+            st.rerun()   # إعادة تحميل الصفحة مباشرة
         else:
             st.error("❌ اسم المستخدم أو كلمة المرور غير صحيحة")
 
     st.markdown('</div></div>', unsafe_allow_html=True)
 
 
-# ====================== تحقق من حالة الجلسة ======================
+# ---- تحقق من حالة الجلسة ----
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 
