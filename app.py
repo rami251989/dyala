@@ -55,6 +55,7 @@ def map_gender(x):
         return "M"
 
 # ---- تسجيل الدخول ----
+# ---- تسجيل الدخول ----
 def login():
     # CSS لتوسيط وتجميل واجهة تسجيل الدخول
     st.markdown(
@@ -73,10 +74,6 @@ def login():
             box-shadow: 0px 4px 20px rgba(0,0,0,0.1);
             text-align: center;
             width: 350px;
-        }
-        .login-box h2 {
-            margin-bottom: 1.5rem;
-            color: #2c3e50;
         }
         .stTextInput>div>div>input {
             text-align: center;
@@ -98,21 +95,30 @@ def login():
         unsafe_allow_html=True
     )
 
-    # هيكل تسجيل الدخول
+    # صندوق تسجيل الدخول
     st.markdown('<div class="login-container"><div class="login-box">', unsafe_allow_html=True)
-
     st.markdown("## 🔑 تسجيل الدخول")
-    u = st.text_input("👤 اسم المستخدم")
-    p = st.text_input("🔒 كلمة المرور", type="password")
 
-    if st.button("🚀 دخول"):
+    u = st.text_input("👤 اسم المستخدم", key="login_user")
+    p = st.text_input("🔒 كلمة المرور", type="password", key="login_pass")
+
+    if st.button("🚀 دخول", key="login_btn"):
         if u == USERNAME and p == PASSWORD:
             st.session_state.logged_in = True
-            st.success("✅ تسجيل الدخول ناجح")
+            st.experimental_rerun()   # 🔑 إعادة تحميل الصفحة بعد تسجيل الدخول
         else:
             st.error("❌ اسم المستخدم أو كلمة المرور غير صحيحة")
 
     st.markdown('</div></div>', unsafe_allow_html=True)
+
+
+# ====================== تحقق من حالة الجلسة ======================
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+
+if not st.session_state.logged_in:
+    login()
+    st.stop()
 
 # ========================== الواجهة بعد تسجيل الدخول ==========================
 st.title("📊 بغداد - البحث في سجلات الناخبين")
