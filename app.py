@@ -56,22 +56,63 @@ def map_gender(x):
 
 # ---- تسجيل الدخول ----
 def login():
+    # CSS لتوسيط وتجميل واجهة تسجيل الدخول
+    st.markdown(
+        """
+        <style>
+        .login-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 80vh;
+        }
+        .login-box {
+            background: #ffffff;
+            padding: 2rem 3rem;
+            border-radius: 15px;
+            box-shadow: 0px 4px 20px rgba(0,0,0,0.1);
+            text-align: center;
+            width: 350px;
+        }
+        .login-box h2 {
+            margin-bottom: 1.5rem;
+            color: #2c3e50;
+        }
+        .stTextInput>div>div>input {
+            text-align: center;
+        }
+        .stButton button {
+            background: linear-gradient(90deg, #4e73df, #1cc88a);
+            color: white;
+            border-radius: 8px;
+            padding: 0.5rem 1rem;
+            font-weight: bold;
+            transition: 0.3s;
+        }
+        .stButton button:hover {
+            background: linear-gradient(90deg, #1cc88a, #4e73df);
+            transform: scale(1.05);
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # هيكل تسجيل الدخول
+    st.markdown('<div class="login-container"><div class="login-box">', unsafe_allow_html=True)
+
     st.markdown("## 🔑 تسجيل الدخول")
     u = st.text_input("👤 اسم المستخدم")
     p = st.text_input("🔒 كلمة المرور", type="password")
-    if st.button("دخول"):
+
+    if st.button("🚀 دخول"):
         if u == USERNAME and p == PASSWORD:
             st.session_state.logged_in = True
             st.success("✅ تسجيل الدخول ناجح")
         else:
             st.error("❌ اسم المستخدم أو كلمة المرور غير صحيحة")
 
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-
-if not st.session_state.logged_in:
-    login()
-    st.stop()
+    st.markdown('</div></div>', unsafe_allow_html=True)
 
 # ========================== الواجهة بعد تسجيل الدخول ==========================
 st.title("📊 بغداد - البحث في سجلات الناخبين")
