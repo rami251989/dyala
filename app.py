@@ -578,60 +578,73 @@ with tab_check:
 
         except Exception as e:
             st.error(f"❌ خطأ أثناء التحقق: {e}")
+tab_browse, tab_single, tab_file, tab_count, tab_check, tab_count_custom, tab_group = st.tabs([...])
+```)  
+وهذا يعيد تعريف كل التبويبات من جديد، مما يجعل القديمة تضيع في الذاكرة، فينهار الـ `with tab_group:` لأن الـ Streamlit لا يسمح بعمل تبويبات جديدة بنفس الأسلوب بعد تعريف تبويبات سابقة.
 
+---
+
+### ✅ الحل الأنيق — بدون كسر أي تبويب سابق
+نضيف تبويب **جديد مستقل تمامًا** في الأسفل باستخدام الطريقة الصحيحة 👇  
+(يعني ما نعيد تعريف التبويبات القديمة نهائيًا)
+
+---
+
+### ✨ الكود الصحيح (الجاهز والنهائي)
+ضعه **بعد آخر تبويب عندك (tab_check)**:
+
+```python
 # ----------------------------------------------------------------------------- #
-# 8) 🧮 تحليل مخصص مع اختيار الأعمدة (Group & Count)
+# 8) 🧩 تحليل مخصص (Group & Count)
 # ----------------------------------------------------------------------------- #
-with tab_group:
-    st.subheader("🧩 تحليل مخصص حسب الأعمدة المختارة")
+st.markdown("---")
+st.subheader("🧩 تحليل مخصص (Group & Count)")
 
-    st.markdown("""
-    **📋 التعليمات:**
-    - ارفع ملف Excel يحتوي الأعمدة المطلوبة.  
-    - اختر الأعمدة التي تريد تجميع النتائج بناءً عليها (مثلاً: *رقم مركز الاقتراع + رقم مركز التسجيل*).  
-    - اختر العمود الذي تريد حساب عدد تكراراته (COUNT).  
-    - باسم سيُظهر لك عدد الصفوف (الناخبين مثلًا) ضمن كل مجموعة 👇
-    """)
+st.markdown("""
+**📋 التعليمات:**
+- ارفع ملف Excel يحتوي الأعمدة المطلوبة.  
+- اختر الأعمدة التي تريد تجميع النتائج بناءً عليها (مثلاً: *رقم مركز الاقتراع + رقم مركز التسجيل*).  
+- اختر العمود الذي تريد حساب عدد تكراراته (COUNT).  
+- باسم سيُظهر لك عدد الصفوف (الناخبين مثلاً) ضمن كل مجموعة 👇
+""")
 
-    uploaded_group = st.file_uploader("📤 ارفع ملف Excel", type=["xlsx"], key="group_file")
+uploaded_group = st.file_uploader("📤 ارفع ملف Excel للتحليل المخصص", type=["xlsx"], key="group_file")
 
-    if uploaded_group:
-        try:
-            df = pd.read_excel(uploaded_group, engine="openpyxl")
-            st.success(f"✅ تم تحميل الملف ({len(df)} صف)")
+if uploaded_group:
+    try:
+        df = pd.read_excel(uploaded_group, engine="openpyxl")
+        st.success(f"✅ تم تحميل الملف ({len(df)} صف)")
 
-            st.markdown("### 🧱 الأعمدة المتوفرة:")
-            st.write(list(df.columns))
+        st.markdown("### 🧱 الأعمدة المتوفرة:")
+        st.write(list(df.columns))
 
-            # اختيار الأعمدة للتجميع
-            group_cols = st.multiselect("📊 اختر الأعمدة للتجميع (Group By):", options=df.columns)
-            count_col = st.selectbox("🔢 اختر العمود المراد عده (COUNT):", options=df.columns)
+        group_cols = st.multiselect("📊 اختر الأعمدة للتجميع (Group By):", options=df.columns)
+        count_col = st.selectbox("🔢 اختر العمود المراد عده (COUNT):", options=df.columns)
 
-            if group_cols and count_col and st.button("🚀 تنفيذ التحليل المخصص"):
-                progress = st.progress(0, text="🤖 باسم يحلل البيانات...")
-                total_steps = 3
+        if group_cols and count_col and st.button("🚀 تنفيذ التحليل المخصص"):
+            progress = st.progress(0, text="🤖 باسم يحلل البيانات...")
+            total_steps = 3
 
-                # الخطوة 1️⃣ - تجهيز البيانات
-                progress.progress(1/total_steps, text="🧮 تجميع البيانات...")
+            # الخطوة 1️⃣ - تجهيز البيانات
+            progress.progress(1/total_steps, text="🧮 تجميع البيانات...")
 
-                # الخطوة 2️⃣ - حساب عدد الصفوف حسب الأعمدة المحددة
-                grouped = df.groupby(group_cols)[count_col].count().reset_index()
-                grouped = grouped.rename(columns={count_col: "عدد الصفوف"})
+            # الخطوة 2️⃣ - حساب عدد الصفوف حسب الأعمدة المحددة
+            grouped = df.groupby(group_cols)[count_col].count().reset_index()
+            grouped = grouped.rename(columns={count_col: "عدد الصفوف"})
 
-                progress.progress(2/total_steps, text="📊 تجهيز النتائج...")
+            progress.progress(2/total_steps, text="📊 تجهيز النتائج...")
 
-                # الخطوة 3️⃣ - عرض وتحميل النتائج
-                st.dataframe(grouped, use_container_width=True, height=450)
+            # الخطوة 3️⃣ - عرض وتحميل النتائج
+            st.dataframe(grouped, use_container_width=True, height=450)
 
-                # زر تحميل النتائج
-                out_file = "نتائج_تحليل_مخصص.xlsx"
-                grouped.to_excel(out_file, index=False, engine="openpyxl")
-                with open(out_file, "rb") as f:
-                    st.download_button("⬇️ تحميل النتائج (Excel)", f,
-                        file_name="نتائج_تحليل_مخصص.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            # زر تحميل النتائج
+            out_file = "نتائج_تحليل_مخصص.xlsx"
+            grouped.to_excel(out_file, index=False, engine="openpyxl")
+            with open(out_file, "rb") as f:
+                st.download_button("⬇️ تحميل النتائج (Excel)", f,
+                    file_name="نتائج_تحليل_مخصص.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-                progress.progress(1.0, text="✅ تم التحليل بنجاح بواسطة باسم!")
-        except Exception as e:
-            st.error(f"❌ حدث خطأ أثناء التحليل: {e}")
-
+            progress.progress(1.0, text="✅ تم التحليل بنجاح بواسطة باسم!")
+    except Exception as e:
+        st.error(f"❌ حدث خطأ أثناء التحليل: {e}")
