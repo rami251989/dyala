@@ -578,3 +578,54 @@ with tab_check:
 
         except Exception as e:
             st.error(f"❌ خطأ أثناء التحقق: {e}")
+# ----------------------------------------------------------------------------- #
+# 7) 📊 تحليل بيانات مخصص (COUNT حسب الأعمدة)
+# ----------------------------------------------------------------------------- #
+tab_agg = st.tabs(["📊 تحليل البيانات (COUNT)"])[0]
+
+with tab_agg:
+    st.subheader("📊 تحليل مخصص لملف Excel (COUNT حسب الأعمدة)")
+
+    st.markdown("""
+    **📋 التعليمات:**
+    - ارفع ملف Excel يحتوي أعمدة تريد تحليلها.
+    - اختر الأعمدة التي سيتم تجميعها (GROUP BY).
+    - اختر العمود الذي سيتم حساب عدد تكراره (COUNT).
+    - سيتم تنزيل ملف Excel يحتوي النتائج فورًا ⚡
+    """)
+
+    uploaded_agg = st.file_uploader("📤 ارفع ملف Excel للتحليل", type=["xlsx"], key="agg_file")
+
+    if uploaded_agg:
+        df = pd.read_excel(uploaded_agg, engine="openpyxl")
+        st.success(f"✅ تم تحميل الملف بنجاح ({len(df)} صف)")
+
+        # عرض الأعمدة
+        st.markdown("### 🧱 الأعمدة المتاحة:")
+        st.write(list(df.columns))
+
+        group_cols = st.multiselect("🧩 اختر الأعمدة للتجميع (Group By):", options=df.columns)
+        count_col = st.selectbox("🔢 اختر العمود المراد حساب عدد تكراره (COUNT):", options=df.columns)
+
+        if group_cols and count_col and st.button("🚀 تنفيذ التحليل"):
+            try:
+                progress = st.progress(0, text="🤖 باسم يعالج البيانات...")
+
+                # تجميع سريع باستخدام pandas
+                result = df.groupby(group_cols)[count_col].count().reset_index()
+                result = result.rename(columns={count_col: "عدد التكرارات"})
+                progress.progress(100, text="✅ التحليل اكتمل!")
+
+                st.success("🎯 تم إنجاز التحليل بنجاح — جاهز للتحميل")
+                st.dataframe(result, use_container_width=True, height=450)
+
+                # حفظ الملف الناتج
+                out_file = "نتائج_تحليل_COUNT.xlsx"
+                result.to_excel(out_file, index=False, engine="openpyxl")
+                with open(out_file, "rb") as f:
+                    st.download_button("⬇️ تحميل ملف النتائج (Excel)", f,
+                        file_name="نتائج_تحليل_COUNT.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+            except Exception as e:
+                st.error(f"❌ خطأ أثناء التحليل: {e}")
