@@ -479,12 +479,9 @@ with tab_count:
 # ----------------------------------------------------------------------------- #
 # 6) 🧾 التحقق من صحة المعلومات (بواسطة باسم)
 # ----------------------------------------------------------------------------- #
-tab_browse, tab_single, tab_file, tab_count, tab_check = st.tabs(
-    ["📄 تصفّح السجلات", "🔍 بحث برقم", "📂 رفع ملف Excel", "📦 عدّ البطاقات", "🧾 التحقق من المعلومات"]
-)
-
 with tab_check:
-    st.subheader("🧾 التحقق من صحة بيانات الناخبين (بواسطة باسم 🤖)")
+    st.subheader("🧾 التحقق من صحة بيانات الناخبين (بواسطة باسم ⚡ سريع)")
+
     st.markdown("""
     **📋 التعليمات:**
     - الملف يجب أن يحتوي الأعمدة التالية:
@@ -496,7 +493,7 @@ with tab_check:
 
     uploaded_check = st.file_uploader("📤 ارفع ملف Excel للتحقق", type=["xlsx"], key="check_file")
 
-    if uploaded_check and st.button("🚀 بدء التحقق بواسطة باسم"):
+    if uploaded_check and st.button("🚀 بدء التحقق السريع بواسطة باسم"):
         try:
             df_check = pd.read_excel(uploaded_check, engine="openpyxl")
 
@@ -506,74 +503,78 @@ with tab_check:
             if missing_cols:
                 st.error(f"❌ الملف ناقص الأعمدة التالية: {', '.join(missing_cols)}")
             else:
+                # إظهار شريط التقدم باسم
+                progress_bar = st.progress(0, text="🤖 باسم يحضّر البيانات...")
+                total_steps = 4
+
+                # الخطوة 1️⃣ - تحميل أرقام الناخبين من الملف
+                voter_list = df_check["رقم الناخب"].astype(str).tolist()
+                progress_bar.progress(1/total_steps, text="📥 تحميل أرقام الناخبين...")
+
+                # الخطوة 2️⃣ - جلب كل البيانات من القاعدة دفعة واحدة
                 conn = get_conn()
-                cur = conn.cursor()
-
-                st.info("🤖 جاري التحقق... الرجاء الانتظار قليلاً ✨")
-                progress_text = st.empty()
-                progress_bar = st.progress(0, text="🔎 باسم يتحقق من البيانات...")
-
-                results = []
-                total = len(df_check)
-
-                for idx, row in df_check.iterrows():
-                    voter_no = str(row["رقم الناخب"]).strip()
-                    name = str(row["الاسم"]).strip()
-                    family_no = str(row["رقم العائلة"]).strip()
-                    center_no = str(row["رقم مركز الاقتراع"]).strip()
-
-                    query = """
-                        SELECT "الاسم الثلاثي", "رقم العائلة", "رقم مركز الاقتراع"
-                        FROM "Bagdad"
-                        WHERE "رقم الناخب" = %s
-                    """
-                    cur.execute(query, (voter_no,))
-                    record = cur.fetchone()
-
-                    if record:
-                        db_name, db_family, db_center = [str(x).strip() for x in record]
-                        name_match = "✅" if name == db_name else "❌"
-                        family_match = "✅" if family_no == db_family else "❌"
-                        center_match = "✅" if center_no == db_center else "❌"
-                        overall = "✅ مطابق" if all(x == "✅" for x in [name_match, family_match, center_match]) else "⚠️ اختلاف"
-
-                        results.append({
-                            "رقم الناخب": voter_no,
-                            "الاسم المدخل": name,
-                            "الاسم في القاعدة": db_name,
-                            "تطابق الاسم": name_match,
-                            "رقم العائلة المدخل": family_no,
-                            "رقم العائلة في القاعدة": db_family,
-                            "تطابق رقم العائلة": family_match,
-                            "رقم مركز الاقتراع المدخل": center_no,
-                            "رقم مركز الاقتراع في القاعدة": db_center,
-                            "تطابق المركز": center_match,
-                            "النتيجة النهائية": overall
-                        })
-                    else:
-                        results.append({
-                            "رقم الناخب": voter_no,
-                            "النتيجة النهائية": "❌ غير موجود في القاعدة"
-                        })
-
-                    progress_value = int(((idx + 1) / total) * 100)
-                    progress_bar.progress(progress_value, text=f"🤖 باسم يتحقق... {progress_value}%")
-
+                placeholders = ",".join(["%s"] * len(voter_list))
+                query = f"""
+                    SELECT "رقم الناخب","الاسم الثلاثي","رقم العائلة","رقم مركز الاقتراع"
+                    FROM "Bagdad"
+                    WHERE "رقم الناخب" IN ({placeholders})
+                """
+                df_db = pd.read_sql_query(query, conn, params=voter_list)
                 conn.close()
-                progress_bar.empty()
-                progress_text.success("✅ تم الانتهاء من التحقق بواسطة باسم!")
+                progress_bar.progress(2/total_steps, text="💾 تم جلب البيانات من القاعدة...")
 
-                result_df = pd.DataFrame(results)
-                st.dataframe(result_df, use_container_width=True, height=450)
+                # الخطوة 3️⃣ - دمج البيانات حسب رقم الناخب
+                merged = pd.merge(
+                    df_check.astype(str),
+                    df_db.astype(str),
+                    on="رقم الناخب",
+                    how="left",
+                    suffixes=("_المدخل", "_القاعدة")
+                )
 
-                # حفظ النتائج كملف Excel
-                out_file = "نتائج_التحقق_بواسطة_باسم.xlsx"
-                result_df.to_excel(out_file, index=False, engine="openpyxl")
+                progress_bar.progress(3/total_steps, text="🧠 باسم يقارن البيانات...")
+
+                # الخطوة 4️⃣ - التحقق من التطابقات
+                def match(a, b): return "✅" if a == b else "❌"
+
+                merged["تطابق الاسم"] = merged.apply(lambda r: match(r["الاسم"], r["الاسم الثلاثي"]), axis=1)
+                merged["تطابق رقم العائلة"] = merged.apply(lambda r: match(r["رقم العائلة_المدخل"], r["رقم العائلة_القاعدة"]), axis=1)
+                merged["تطابق المركز"] = merged.apply(lambda r: match(r["رقم مركز الاقتراع_المدخل"], r["رقم مركز الاقتراع_القاعدة"]), axis=1)
+
+                def overall(row):
+                    if pd.isna(row["الاسم الثلاثي"]):
+                        return "❌ غير موجود في القاعدة"
+                    elif all(row[x] == "✅" for x in ["تطابق الاسم", "تطابق رقم العائلة", "تطابق المركز"]):
+                        return "✅ مطابق"
+                    else:
+                        return "⚠️ اختلاف"
+
+                merged["النتيجة النهائية"] = merged.apply(overall, axis=1)
+
+                progress_bar.progress(1.0, text="✅ تم التحقق بواسطة باسم بسرعة ⚡")
+
+                # عرض النتائج
+                st.dataframe(merged[[
+                    "رقم الناخب",
+                    "الاسم",
+                    "الاسم الثلاثي",
+                    "تطابق الاسم",
+                    "رقم العائلة_المدخل",
+                    "رقم العائلة_القاعدة",
+                    "تطابق رقم العائلة",
+                    "رقم مركز الاقتراع_المدخل",
+                    "رقم مركز الاقتراع_القاعدة",
+                    "تطابق المركز",
+                    "النتيجة النهائية"
+                ]], use_container_width=True, height=450)
+
+                # تحميل ملف النتائج
+                out_file = "نتائج_التحقق_السريع.xlsx"
+                merged.to_excel(out_file, index=False, engine="openpyxl")
                 with open(out_file, "rb") as f:
-                    st.download_button("⬇️ تحميل نتائج التحقق", f,
-                        file_name="نتائج_التحقق_بواسطة_باسم.xlsx",
+                    st.download_button("⬇️ تحميل نتائج التحقق السريع", f,
+                        file_name="نتائج_التحقق_السريع.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
         except Exception as e:
-            st.error(f"❌ حدث خطأ أثناء التحقق: {e}")
-
+            st.error(f"❌ خطأ أثناء التحقق: {e}")
