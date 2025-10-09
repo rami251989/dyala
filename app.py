@@ -477,48 +477,55 @@ with tab_count:
                 st.success("✅ لا توجد أرقام مفقودة (كل الأرقام الموجودة تم إيجادها في قاعدة البيانات).")
 
 # ----------------------------------------------------------------------------- #
-# 6) 🧾 التحقق من المعلومات (الاسم - رقم العائلة - رقم مركز الاقتراع)
+# 6) 🧾 التحقق من صحة المعلومات (بواسطة باسم)
 # ----------------------------------------------------------------------------- #
-tab_check = st.tabs(["🧾 التحقق من المعلومات"])[0]
+tab_browse, tab_single, tab_file, tab_count, tab_check = st.tabs(
+    ["📄 تصفّح السجلات", "🔍 بحث برقم", "📂 رفع ملف Excel", "📦 عدّ البطاقات", "🧾 التحقق من المعلومات"]
+)
 
 with tab_check:
-    st.subheader("🧾 التحقق من صحة بيانات الناخبين")
-
+    st.subheader("🧾 التحقق من صحة بيانات الناخبين (بواسطة باسم 🤖)")
     st.markdown("""
-    **📋 ملاحظات:**
-    - الملف يجب أن يحتوي على الأعمدة التالية بالضبط:
-      - رقم الناخب
-      - الاسم
-      - رقم العائلة
-      - رقم مركز الاقتراع
+    **📋 التعليمات:**
+    - الملف يجب أن يحتوي الأعمدة التالية:
+      1. رقم الناخب  
+      2. الاسم  
+      3. رقم العائلة  
+      4. رقم مركز الاقتراع
     """)
 
     uploaded_check = st.file_uploader("📤 ارفع ملف Excel للتحقق", type=["xlsx"], key="check_file")
 
-    if uploaded_check and st.button("🚀 بدء المقارنة"):
+    if uploaded_check and st.button("🚀 بدء التحقق بواسطة باسم"):
         try:
             df_check = pd.read_excel(uploaded_check, engine="openpyxl")
 
             required_cols = ["رقم الناخب", "الاسم", "رقم العائلة", "رقم مركز الاقتراع"]
             missing_cols = [c for c in required_cols if c not in df_check.columns]
+
             if missing_cols:
                 st.error(f"❌ الملف ناقص الأعمدة التالية: {', '.join(missing_cols)}")
             else:
                 conn = get_conn()
                 cur = conn.cursor()
 
-                results = []
+                st.info("🤖 جاري التحقق... الرجاء الانتظار قليلاً ✨")
+                progress_text = st.empty()
+                progress_bar = st.progress(0, text="🔎 باسم يتحقق من البيانات...")
 
-                for _, row in df_check.iterrows():
+                results = []
+                total = len(df_check)
+
+                for idx, row in df_check.iterrows():
                     voter_no = str(row["رقم الناخب"]).strip()
                     name = str(row["الاسم"]).strip()
                     family_no = str(row["رقم العائلة"]).strip()
                     center_no = str(row["رقم مركز الاقتراع"]).strip()
 
-                    # البحث عن بيانات الناخب في القاعدة
                     query = """
                         SELECT "الاسم الثلاثي", "رقم العائلة", "رقم مركز الاقتراع"
-                        FROM "Bagdad" WHERE "رقم الناخب" = %s
+                        FROM "Bagdad"
+                        WHERE "رقم الناخب" = %s
                     """
                     cur.execute(query, (voter_no,))
                     record = cur.fetchone()
@@ -528,7 +535,7 @@ with tab_check:
                         name_match = "✅" if name == db_name else "❌"
                         family_match = "✅" if family_no == db_family else "❌"
                         center_match = "✅" if center_no == db_center else "❌"
-                        overall = "✅ مطابق" if all(x == "✅" for x in [name_match, family_match, center_match]) else "⚠️ يوجد اختلاف"
+                        overall = "✅ مطابق" if all(x == "✅" for x in [name_match, family_match, center_match]) else "⚠️ اختلاف"
 
                         results.append({
                             "رقم الناخب": voter_no,
@@ -549,17 +556,24 @@ with tab_check:
                             "النتيجة النهائية": "❌ غير موجود في القاعدة"
                         })
 
+                    progress_value = int(((idx + 1) / total) * 100)
+                    progress_bar.progress(progress_value, text=f"🤖 باسم يتحقق... {progress_value}%")
+
                 conn.close()
+                progress_bar.empty()
+                progress_text.success("✅ تم الانتهاء من التحقق بواسطة باسم!")
+
                 result_df = pd.DataFrame(results)
                 st.dataframe(result_df, use_container_width=True, height=450)
 
                 # حفظ النتائج كملف Excel
-                out_file = "نتائج_التحقق.xlsx"
+                out_file = "نتائج_التحقق_بواسطة_باسم.xlsx"
                 result_df.to_excel(out_file, index=False, engine="openpyxl")
                 with open(out_file, "rb") as f:
                     st.download_button("⬇️ تحميل نتائج التحقق", f,
-                        file_name="نتائج_التحقق.xlsx",
+                        file_name="نتائج_التحقق_بواسطة_باسم.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
         except Exception as e:
             st.error(f"❌ حدث خطأ أثناء التحقق: {e}")
+
