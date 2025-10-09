@@ -356,7 +356,6 @@ with tab_file:
             st.error(f"❌ خطأ: {e}")
      
 # ----------------------------------------------------------------------------- #
-# ----------------------------------------------------------------------------- #
 # 5) 📦 عدّ البطاقات (أرقام 8 خانات) + بحث في القاعدة + قائمة الأرقام غير الموجودة
 # ----------------------------------------------------------------------------- #
 with tab_count:
@@ -436,18 +435,6 @@ with tab_count:
                         })
                         found_df["الجنس"] = found_df["الجنس"].apply(map_gender)
 
-                        # 🔄 إعادة تشكيل الجدول مثل سترَكشر البحث باستخدام ملف Excel
-                        found_df["رقم المندوب الرئيسي"] = ""
-                        found_df["الحالة"] = 0
-                        found_df["ملاحظة"] = ""
-                        found_df["رقم المحطة"] = 1
-
-                        found_df = found_df[[
-                            "رقم الناخب","الاسم","الجنس","رقم الهاتف",
-                            "رقم العائلة","مركز الاقتراع","رقم مركز الاقتراع","رقم المحطة",
-                            "رقم المندوب الرئيسي","الحالة","ملاحظة"
-                        ]]
-
                     found_numbers_in_db = set(found_df["رقم الناخب"].astype(str).tolist()) if not found_df.empty else set()
                     for n in unique_numbers:
                         if n not in found_numbers_in_db:
@@ -488,3 +475,91 @@ with tab_count:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             else:
                 st.success("✅ لا توجد أرقام مفقودة (كل الأرقام الموجودة تم إيجادها في قاعدة البيانات).")
+
+# ----------------------------------------------------------------------------- #
+# 6) 🧾 التحقق من المعلومات (الاسم - رقم العائلة - رقم مركز الاقتراع)
+# ----------------------------------------------------------------------------- #
+tab_check = st.tabs(["🧾 التحقق من المعلومات"])[0]
+
+with tab_check:
+    st.subheader("🧾 التحقق من صحة بيانات الناخبين")
+
+    st.markdown("""
+    **📋 ملاحظات:**
+    - الملف يجب أن يحتوي على الأعمدة التالية بالضبط:
+      - رقم الناخب
+      - الاسم
+      - رقم العائلة
+      - رقم مركز الاقتراع
+    """)
+
+    uploaded_check = st.file_uploader("📤 ارفع ملف Excel للتحقق", type=["xlsx"], key="check_file")
+
+    if uploaded_check and st.button("🚀 بدء المقارنة"):
+        try:
+            df_check = pd.read_excel(uploaded_check, engine="openpyxl")
+
+            required_cols = ["رقم الناخب", "الاسم", "رقم العائلة", "رقم مركز الاقتراع"]
+            missing_cols = [c for c in required_cols if c not in df_check.columns]
+            if missing_cols:
+                st.error(f"❌ الملف ناقص الأعمدة التالية: {', '.join(missing_cols)}")
+            else:
+                conn = get_conn()
+                cur = conn.cursor()
+
+                results = []
+
+                for _, row in df_check.iterrows():
+                    voter_no = str(row["رقم الناخب"]).strip()
+                    name = str(row["الاسم"]).strip()
+                    family_no = str(row["رقم العائلة"]).strip()
+                    center_no = str(row["رقم مركز الاقتراع"]).strip()
+
+                    # البحث عن بيانات الناخب في القاعدة
+                    query = """
+                        SELECT "الاسم الثلاثي", "رقم العائلة", "رقم مركز الاقتراع"
+                        FROM "Bagdad" WHERE "رقم الناخب" = %s
+                    """
+                    cur.execute(query, (voter_no,))
+                    record = cur.fetchone()
+
+                    if record:
+                        db_name, db_family, db_center = [str(x).strip() for x in record]
+                        name_match = "✅" if name == db_name else "❌"
+                        family_match = "✅" if family_no == db_family else "❌"
+                        center_match = "✅" if center_no == db_center else "❌"
+                        overall = "✅ مطابق" if all(x == "✅" for x in [name_match, family_match, center_match]) else "⚠️ يوجد اختلاف"
+
+                        results.append({
+                            "رقم الناخب": voter_no,
+                            "الاسم المدخل": name,
+                            "الاسم في القاعدة": db_name,
+                            "تطابق الاسم": name_match,
+                            "رقم العائلة المدخل": family_no,
+                            "رقم العائلة في القاعدة": db_family,
+                            "تطابق رقم العائلة": family_match,
+                            "رقم مركز الاقتراع المدخل": center_no,
+                            "رقم مركز الاقتراع في القاعدة": db_center,
+                            "تطابق المركز": center_match,
+                            "النتيجة النهائية": overall
+                        })
+                    else:
+                        results.append({
+                            "رقم الناخب": voter_no,
+                            "النتيجة النهائية": "❌ غير موجود في القاعدة"
+                        })
+
+                conn.close()
+                result_df = pd.DataFrame(results)
+                st.dataframe(result_df, use_container_width=True, height=450)
+
+                # حفظ النتائج كملف Excel
+                out_file = "نتائج_التحقق.xlsx"
+                result_df.to_excel(out_file, index=False, engine="openpyxl")
+                with open(out_file, "rb") as f:
+                    st.download_button("⬇️ تحميل نتائج التحقق", f,
+                        file_name="نتائج_التحقق.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+        except Exception as e:
+            st.error(f"❌ حدث خطأ أثناء التحقق: {e}")
