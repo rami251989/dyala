@@ -435,11 +435,25 @@ with tab_count:
                         })
                         found_df["الجنس"] = found_df["الجنس"].apply(map_gender)
 
+                        # 🧩 إضافة نفس الأعمدة مثل تبويب 📂 رفع ملف Excel
+                        found_df["رقم المندوب الرئيسي"] = ""
+                        found_df["الحالة"] = 0
+                        found_df["ملاحظة"] = ""
+                        found_df["رقم المحطة"] = 1
+
+                        # ترتيب الأعمدة
+                        found_df = found_df[[
+                            "رقم الناخب","الاسم","الجنس","رقم الهاتف",
+                            "رقم العائلة","مركز الاقتراع","رقم مركز الاقتراع","رقم المحطة",
+                            "رقم المندوب الرئيسي","الحالة","ملاحظة"
+                        ]]
+
                     found_numbers_in_db = set(found_df["رقم الناخب"].astype(str).tolist()) if not found_df.empty else set()
                     for n in unique_numbers:
                         if n not in found_numbers_in_db:
                             files = sorted(list(number_to_files.get(n, [])))
                             missing_list.append({"رقم_الناخب": n, "المصدر(الصور)": ", ".join(files)})
+
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء البحث في قاعدة البيانات: {e}")
             else:
@@ -447,15 +461,19 @@ with tab_count:
 
             # ----------------- عرض النتائج للمستخدم -----------------
             st.markdown("### 📊 ملخص الاستخراج")
-            st.metric("إجمالي الأرقام (مع التكرار)", total_cards)
-            st.metric("إجمالي الأرقام الفريدة (8 خانات)", len(unique_numbers))
-            st.metric("عدد الصور المرفوعة", len(imgs_count))
+            c1, c2, c3 = st.columns(3)
+            c1.metric("إجمالي الأرقام (مع التكرار)", total_cards)
+            c2.metric("إجمالي الأرقام الفريدة (8 خانات)", len(unique_numbers))
+            c3.metric("عدد الصور المرفوعة", len(imgs_count))
 
             st.markdown("### 🔎 بيانات الناخبين (الموجودة في قاعدة البيانات)")
             if not found_df.empty:
                 st.dataframe(found_df, use_container_width=True, height=400)
-                out_found = "found_voters.xlsx"
+                out_found = "بيانات_الناخبين_الموجودين.xlsx"
                 found_df.to_excel(out_found, index=False, engine="openpyxl")
+                wb = load_workbook(out_found)
+                wb.active.sheet_view.rightToLeft = True
+                wb.save(out_found)
                 with open(out_found, "rb") as f:
                     st.download_button("⬇️ تحميل بيانات الناخبين الموجودة", f,
                         file_name="بيانات_الناخبين_الموجودين.xlsx",
@@ -475,6 +493,7 @@ with tab_count:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             else:
                 st.success("✅ لا توجد أرقام مفقودة (كل الأرقام الموجودة تم إيجادها في قاعدة البيانات).")
+
 
 # ----------------------------------------------------------------------------- #
 # 6) 🧾 التحقق من صحة المعلومات (بواسطة باسم)
