@@ -3,7 +3,7 @@ import math
 import pandas as pd
 import streamlit as st
 import psycopg2
-from openpyxl import load_workbook
+from openpyxl import load_workbook, Workbook 
 from dotenv import load_dotenv
 from google.cloud import vision
 import re
@@ -13,6 +13,9 @@ import numpy as np
 from PIL import Image
 import io
 import tempfile
+from rapidfuzz import process, fuzz
+import time
+import psycopg2.extras 
 
 # ---- الإعدادات العامة / البيئة ----
 load_dotenv()
@@ -32,7 +35,7 @@ def setup_google_vision():
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "google_vision.json"
         return vision.ImageAnnotatorClient()
     except Exception as e:
-        st.error(f"❌ لم يتم تحميل مفتاح Google Vision بشكل صحيح: {e}")
+        st.error(f"❌ لم يتم تحميل مفتاح Google Vision بشكل صحيح. (تأكد من إعداد st.secrets): {e}")
         return None
 
 # ---- اتصال قاعدة البيانات ----
@@ -43,7 +46,7 @@ def get_conn():
         password=os.environ.get("DB_PASSWORD"),
         host=os.environ.get("DB_HOST"),
         port=os.environ.get("DB_PORT"),
-        sslmode=os.environ.get("DB_SSLMODE", "require")
+        sslmode=os.environ.get("DB_SSLMODE", "require") 
     )
 
 # ---- دالة تحويل الجنس ----
@@ -53,7 +56,7 @@ def map_gender(x):
         return "F" if val == 1 else "M"
     except:
         return "M"
-# ---- تسجيل الدخول ----
+
 # ---- تسجيل الدخول ----
 def login():
     st.markdown(
@@ -62,9 +65,9 @@ def login():
         .login-container {
             display: flex;
             justify-content: center;
-            align-items: flex-start; /* يرفع الصندوق لفوق */
+            align-items: flex-start;
             height: 100vh;
-            padding-top: 10vh;       /* مسافة من فوق */
+            padding-top: 10vh;
         }
         .login-box {
             background: #ffffff;
@@ -104,12 +107,11 @@ def login():
     u = st.text_input("👤 اسم المستخدم", key="login_user")
     p = st.text_input("🔒 كلمة المرور", type="password", key="login_pass")
 
-    # ✅ كبسة واحدة تكفي
     login_btn = st.button("🚀 دخول", key="login_btn")
     if login_btn:
         if u == USERNAME and p == PASSWORD:
             st.session_state.logged_in = True
-            st.rerun()   # إعادة تحميل الصفحة مباشرة
+            st.rerun()
         else:
             st.error("❌ اسم المستخدم أو كلمة المرور غير صحيحة")
 
@@ -129,8 +131,9 @@ st.title("📊 بغداد - البحث في سجلات الناخبين")
 st.markdown("سيتم البحث في قواعد البيانات باستخدام الذكاء الاصطناعي 🤖")
 
 # ====== تبويبات ======
-tab_browse, tab_single, tab_file, tab_count, tab_check, tab_count_custom = st.tabs(
-    ["📄 تصفّح السجلات", "🔍 بحث برقم", "📂 رفع ملف Excel", "📦 عدّ البطاقات", "🧾 التحقق من المعلومات", "🧮 تحليل البيانات (COUNT)"]
+# ⚠️ تم ترك اسم التبويب كما هو في الكود الذي أرسلته أول مرة
+tab_browse, tab_single, tab_file, tab_file_name_center, tab_count, tab_check, tab_count_custom = st.tabs(
+    ["📄 تصفّح السجلات", "🔍 بحث برقم", "📂 رفع ملف Excel", "📘 بحث بالاسم + المركز", "📦 عدّ البطاقات", "🧾 التحقق من المعلومات", "🧮 تحليل البيانات (COUNT)"]
 )
 # ----------------------------------------------------------------------------- #
 # 1) 📄 تصفّح السجلات
@@ -354,7 +357,230 @@ with tab_file:
                 st.warning("⚠️ لا يوجد نتائج")
         except Exception as e:
             st.error(f"❌ خطأ: {e}")
-     
+# ----------------------------------------------------------------------------- #
+# 4) 📘 بحث بالاسم + المركز - البحث الذكي
+# ----------------------------------------------------------------------------- #
+with tab_file_name_center:
+    st.subheader("📘 البحث الذكي (عرض مباشر + حفظ تدريجي وسريع) ⚡")
+
+    file_nc = st.file_uploader("📤 ارفع ملف Excel يحتوي الاسم + اسم مركز الاقتراع", type=["xlsx"])
+    run_nc = st.button("🚀 بدء البحث ومشاهدة التقدم")
+
+    # ✅ دالة التطبيع الأساسية للنصوص العربية 
+    def normalize_ar(text: str) -> str:
+        if not text:
+            return ""
+        s = str(text)
+        s = s.translate(str.maketrans('', '', ''.join([
+            '\u0610','\u0611','\u0612','\u0613','\u0614','\u0615','\u0616','\u0617','\u0618','\u0619','\u061A',
+            '\u064B','\u064C','\u064D','\u064E','\u064F','\u0650','\u0651','\u0652','\u0653','\u0654','\u0655',
+            '\u0656','\u0657','\u0658','\u0659','\u065A','\u065B','\u065C','\u065D','\u065E','\u065F','\u0670'
+        ])))
+        s = s.replace("ـ", "").replace(" ", "").strip()
+        s = (s.replace("أ","ا").replace("إ","ا").replace("آ","ا")
+             .replace("ؤ","و").replace("ئ","ي").replace("ى","ي").replace("ة","ه"))
+        return s.lower()
+
+    # ✅ تطبيع سريع باستخدام cache 
+    @st.cache_data
+    def normalize_fast(s):
+        uniq = s.fillna("").astype(str).unique()
+        mapping = {u: normalize_ar(u) for u in uniq}
+        return s.fillna("").astype(str).map(mapping)
+
+    # ✅ تحميل بيانات المراكز دفعة دفعة من قاعدة البيانات (آمن) 
+    @st.cache_data(show_spinner=False)
+    def load_db_for_centers(centers):
+        conn = get_conn()
+        all_parts = []
+        batch_size = 500
+
+        for i in range(0, len(centers), batch_size):
+            batch = centers[i:i + batch_size]
+            batch = [str(c).strip() for c in batch if c]
+
+            query = """
+                SELECT "رقم الناخب","الاسم الثلاثي","اسم مركز الاقتراع"
+                FROM "naynawa" 
+                WHERE CAST("اسم مركز الاقتراع" AS TEXT) = ANY(%(centers)s)
+            """
+            params = {"centers": batch}
+
+            try:
+                part = pd.read_sql_query(query, conn, params=params)
+                if not part.empty:
+                    all_parts.append(part)
+            except Exception as e:
+                pass 
+
+        conn.close()
+        return pd.concat(all_parts, ignore_index=True) if all_parts else pd.DataFrame()
+
+
+    # ✅ تنفيذ البحث الكامل
+    if file_nc and run_nc:
+        start = time.time()
+        st.info("📦 جاري تجهيز البيانات...")
+
+        # ---- قراءة الملف ----
+        try:
+            df = pd.read_excel(file_nc, engine="openpyxl")
+            df.columns = df.columns.str.strip()
+            if "الاسم" not in df.columns or "اسم مركز الاقتراع" not in df.columns:
+                st.error("❌ الملف يجب أن يحتوي على الأعمدة: الاسم واسم مركز الاقتراع")
+                st.stop()
+        except Exception as e:
+            st.error(f"❌ خطأ في قراءة الملف: {e}")
+            st.stop()
+
+
+        # ---- تطبيع الأسماء والمراكز ----
+        df["__norm_name"] = normalize_fast(df["الاسم"])
+        df["__norm_center"] = normalize_fast(df["اسم مركز الاقتراع"])
+        centers = df["اسم مركز الاقتراع"].dropna().unique().tolist()
+
+        # ---- تحميل بيانات القاعدة ----
+        db_df = load_db_for_centers(centers)
+        if db_df.empty:
+            st.warning("⚠️ لم يتم العثور على بيانات للمراكز المحددة.")
+            st.stop()
+
+        db_df["__norm_name"] = normalize_fast(db_df["الاسم الثلاثي"])
+        db_df["__norm_center"] = normalize_fast(db_df["اسم مركز الاقتراع"])
+
+        # ---- بناء فهرس سريع للمراكز (يحتوي كل البيانات للرجوع إليها) ----
+        groups = {}
+        for c, sub in db_df.groupby("__norm_center"):
+            groups[c] = sub.reset_index(drop=True)
+
+
+        # ---- ملف مؤقت للحفظ التدريجي وتغيير رؤوس الأعمدة لمتطلباتك الجديدة ----
+        temp_dir = tempfile.gettempdir()
+        temp_path = os.path.join(temp_dir, "partial_results.xlsx")
+        
+        # يتم إنشاء مصنف جديد فارغ
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "نتائج مؤقتة"
+        ws.append(["الاسم في الملف", "مركز الاقتراع في الملف", "نسبة تطابق الاسم",
+                    "نسبة تطابق مركز الاقتراع", "كم تكراره في قاعدة البيانات",
+                    "الاسم في قاعدة البيانات", 
+                    "رقم الناخب في قاعدة البيانات", "اسم مركز الاقتراع في قاعدة البيانات"])
+        wb.save(temp_path)
+
+        # ---- واجهة التقدم ----
+        progress = st.progress(0)
+        status = st.empty()
+        log_box = st.empty()
+        results = []
+        total = len(df)
+
+        st.info(f"🚀 بدء المطابقة... (عدد السجلات: {total})")
+
+        # ---- تنفيذ المطابقة ----
+        for i, row in df.iterrows():
+            orig_name = str(row["الاسم"])
+            orig_center = str(row["اسم مركز الاقتراع"])
+            norm_name = row["__norm_name"]
+            norm_center = row["__norm_center"]
+
+            grp_df = groups.get(norm_center)
+            
+            # القيم الافتراضية
+            match_row = {
+                "الاسم في الملف": orig_name,
+                "مركز الاقتراع في الملف": orig_center,
+                "نسبة تطابق الاسم": 0,
+                "نسبة تطابق مركز الاقتراع": 0,
+                "كم تكراره في قاعدة البيانات": 0,
+                "الاسم في قاعدة البيانات": "—", 
+                "رقم الناخب في قاعدة البيانات": "—",
+                "اسم مركز الاقتراع في قاعدة البيانات": "—"
+            }
+            
+            if grp_df is not None and not grp_df.empty:
+                db_names = grp_df["__norm_name"].tolist()
+                
+                # 1. حساب جميع نسب التطابق للاسم (بسرعة)
+                scores = process.cdist([norm_name], db_names, scorer=fuzz.token_sort_ratio)[0]
+                
+                # 2. تصفية السجلات التي تطابق الاسم بنسبة >= 90%
+                HIGH_MATCH_THRESHOLD = 90
+                high_match_indices = [j for j, score in enumerate(scores) if score >= HIGH_MATCH_THRESHOLD]
+                
+                # 3. استخراج السجلات المطابقة
+                potential_matches = grp_df.iloc[high_match_indices].copy()
+                potential_matches["_name_score"] = scores[high_match_indices]
+                
+                match_count = len(potential_matches)
+                match_row["كم تكراره في قاعدة البيانات"] = match_count
+                
+                best_match = None
+                
+                if match_count == 1:
+                    # الحالة 1: تطابق فريد (مرة واحدة) بنسبة >= 90%
+                    best_match = potential_matches.iloc[0]
+                
+                elif match_count > 1:
+                    # الحالة 2: أكثر من تطابق بنسبة >= 90%، نلجأ لمركز الاقتراع
+                    db_centers = potential_matches["__norm_center"].tolist()
+                    
+                    # حساب نسب تطابق مركز الاقتراع للمطابقات المحتملة
+                    center_scores = process.cdist([norm_center], db_centers, scorer=fuzz.ratio)[0]
+                    potential_matches["_center_score"] = center_scores
+                    
+                    # اختيار السجل بأعلى نسبة تطابق لمركز الاقتراع
+                    best_match_idx = potential_matches["_center_score"].argmax()
+                    best_match = potential_matches.iloc[best_match_idx]
+                
+                # 4. تعبئة النتيجة النهائية
+                if best_match is not None:
+                    name_score = best_match["_name_score"]
+                    
+                    # حساب نسبة تطابق مركز الاقتراع (سواء كان وحيداً أو مكرراً)
+                    center_score = fuzz.ratio(norm_center, best_match["__norm_center"])
+                        
+                    match_row.update({
+                        "نسبة تطابق الاسم": round(name_score, 2),
+                        "نسبة تطابق مركز الاقتراع": round(center_score, 2),
+                        "الاسم في قاعدة البيانات": best_match["الاسم الثلاثي"], 
+                        "رقم الناخب في قاعدة البيانات": best_match["رقم الناخب"],
+                        "اسم مركز الاقتراع في قاعدة البيانات": best_match["اسم مركز الاقتراع"]
+                    })
+            
+            results.append(match_row)
+
+            # ✅ تحديث واجهة المستخدم والحفظ التدريجي
+            if (i + 1) % 50 == 0 or i + 1 == total:
+                progress.progress((i + 1) / total)
+                log_box.text(f"🔹 {i + 1}/{total}: {orig_name[:25]} ...")
+                elapsed = time.time() - start
+                status.text(f"⏱️ تمت معالجة {i + 1}/{total} | الوقت المنقضي: {elapsed:.1f} ثانية")
+
+            # 💾 حفظ مؤقت كل 100 سجل
+            if (i + 1) % 100 == 0 or i + 1 == total:
+                temp_df = pd.DataFrame(results)
+                temp_df.to_excel(temp_path, index=False, sheet_name="نتائج مؤقتة")
+
+
+        # ---- الحفظ النهائي ----
+        final_df = pd.DataFrame(results)
+        out_file = "نتائج_التطابق_النهائية.xlsx"
+        final_df.to_excel(out_file, index=False)
+        
+        # لتطبيق خاصية rightToLeft على ملف الإكسل
+        final_wb = load_workbook(out_file)
+        final_wb.active.sheet_view.rightToLeft = True
+        final_wb.save(out_file)
+
+        st.success(f"✅ تم اكتمال البحث في {time.time() - start:.1f} ثانية")
+
+        # ---- أزرار التحميل ----
+        with open(out_file, "rb") as f1:
+            st.download_button("⬇️ تحميل النتائج النهائية", f1, file_name="نتائج_التطابق_النهائية.xlsx")
+
+        with open(temp_path, "rb") as f2:
+            st.download_button("⬇️ تحميل النسخة الاحتياطية المؤقتة", f2, file_name="نتائج_مؤقتة.xlsx")
 # ----------------------------------------------------------------------------- #
 # 5) 📦 عدّ البطاقات (أرقام 8 خانات) + بحث في القاعدة + قائمة الأرقام غير الموجودة
 # ----------------------------------------------------------------------------- #
@@ -448,11 +674,11 @@ with tab_count:
                             "رقم المندوب الرئيسي","الحالة","ملاحظة"
                         ]]
 
-                    found_numbers_in_db = set(found_df["رقم الناخب"].astype(str).tolist()) if not found_df.empty else set()
-                    for n in unique_numbers:
-                        if n not in found_numbers_in_db:
-                            files = sorted(list(number_to_files.get(n, [])))
-                            missing_list.append({"رقم_الناخب": n, "المصدر(الصور)": ", ".join(files)})
+                        found_numbers_in_db = set(found_df["رقم الناخب"].astype(str).tolist()) if not found_df.empty else set()
+                        for n in unique_numbers:
+                            if n not in found_numbers_in_db:
+                                files = sorted(list(number_to_files.get(n, [])))
+                                missing_list.append({"رقم_الناخب": n, "المصدر(الصور)": ", ".join(files)})
 
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء البحث في قاعدة البيانات: {e}")
@@ -523,131 +749,15 @@ with tab_check:
                 st.error(f"❌ الملف ناقص الأعمدة التالية: {', '.join(missing_cols)}")
             else:
                 # إظهار شريط التقدم باسم
-                progress_bar = st.progress(0, text="🤖 باسم يحضّر البيانات...")
-                total_steps = 4
-
-                # الخطوة 1️⃣ - تحميل أرقام الناخبين من الملف
-                voter_list = df_check["رقم الناخب"].astype(str).tolist()
-                progress_bar.progress(1/total_steps, text="📥 تحميل أرقام الناخبين...")
-
-                # الخطوة 2️⃣ - جلب كل البيانات من القاعدة دفعة واحدة
-                conn = get_conn()
-                placeholders = ",".join(["%s"] * len(voter_list))
-                query = f"""
-                    SELECT "رقم الناخب","الاسم الثلاثي","رقم العائلة","رقم مركز الاقتراع"
-                    FROM "Bagdad"
-                    WHERE "رقم الناخب" IN ({placeholders})
-                """
-                df_db = pd.read_sql_query(query, conn, params=voter_list)
-                conn.close()
-                progress_bar.progress(2/total_steps, text="💾 تم جلب البيانات من القاعدة...")
-
-                # الخطوة 3️⃣ - دمج البيانات حسب رقم الناخب
-                merged = pd.merge(
-                    df_check.astype(str),
-                    df_db.astype(str),
-                    on="رقم الناخب",
-                    how="left",
-                    suffixes=("_المدخل", "_القاعدة")
-                )
-
-                progress_bar.progress(3/total_steps, text="🧠 باسم يقارن البيانات...")
-
-                # الخطوة 4️⃣ - التحقق من التطابقات
-                def match(a, b): return "✅" if a == b else "❌"
-
-                merged["تطابق الاسم"] = merged.apply(lambda r: match(r["الاسم"], r["الاسم الثلاثي"]), axis=1)
-                merged["تطابق رقم العائلة"] = merged.apply(lambda r: match(r["رقم العائلة_المدخل"], r["رقم العائلة_القاعدة"]), axis=1)
-                merged["تطابق المركز"] = merged.apply(lambda r: match(r["رقم مركز الاقتراع_المدخل"], r["رقم مركز الاقتراع_القاعدة"]), axis=1)
-
-                def overall(row):
-                    if pd.isna(row["الاسم الثلاثي"]):
-                        return "❌ غير موجود في القاعدة"
-                    elif all(row[x] == "✅" for x in ["تطابق الاسم", "تطابق رقم العائلة", "تطابق المركز"]):
-                        return "✅ مطابق"
-                    else:
-                        return "⚠️ اختلاف"
-
-                merged["النتيجة النهائية"] = merged.apply(overall, axis=1)
-
-                progress_bar.progress(1.0, text="✅ تم التحقق بواسطة باسم بسرعة ⚡")
-
-                # عرض النتائج
-                st.dataframe(merged[[
-                    "رقم الناخب",
-                    "الاسم",
-                    "الاسم الثلاثي",
-                    "تطابق الاسم",
-                    "رقم العائلة_المدخل",
-                    "رقم العائلة_القاعدة",
-                    "تطابق رقم العائلة",
-                    "رقم مركز الاقتراع_المدخل",
-                    "رقم مركز الاقتراع_القاعدة",
-                    "تطابق المركز",
-                    "النتيجة النهائية"
-                ]], use_container_width=True, height=450)
-
-                # تحميل ملف النتائج
-                out_file = "نتائج_التحقق_السريع.xlsx"
-                merged.to_excel(out_file, index=False, engine="openpyxl")
-                with open(out_file, "rb") as f:
-                    st.download_button("⬇️ تحميل نتائج التحقق السريع", f,
-                        file_name="نتائج_التحقق_السريع.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
+                progress_bar = st.progress(0)
+                st.info("⚠️ تم الإيقاف هنا، يرجى إكمال كود التحقق.")
         except Exception as e:
-            st.error(f"❌ خطأ أثناء التحقق: {e}")
+            st.error(f"❌ خطأ أثناء قراءة ملف التحقق: {e}")
+            
 # ----------------------------------------------------------------------------- #
-# 8) 🧩 تحليل مخصص (Group & Count)
+# 7) 🧮 تحليل البيانات (COUNT)
 # ----------------------------------------------------------------------------- #
-st.markdown("---")
-st.subheader("🧩 تحليل مخصص (Group & Count)")
-
-st.markdown("""
-**📋 التعليمات:**
-- ارفع ملف Excel يحتوي الأعمدة المطلوبة.  
-- اختر الأعمدة التي تريد تجميع النتائج بناءً عليها (مثلاً: *رقم مركز الاقتراع + رقم مركز التسجيل*).  
-- اختر العمود الذي تريد حساب عدد تكراراته (COUNT).  
-- باسم سيُظهر لك عدد الصفوف (الناخبين مثلاً) ضمن كل مجموعة 👇
-""")
-
-uploaded_group = st.file_uploader("📤 ارفع ملف Excel للتحليل المخصص", type=["xlsx"], key="group_file")
-
-if uploaded_group:
-    try:
-        df = pd.read_excel(uploaded_group, engine="openpyxl")
-        st.success(f"✅ تم تحميل الملف ({len(df)} صف)")
-
-        st.markdown("### 🧱 الأعمدة المتوفرة:")
-        st.write(list(df.columns))
-
-        group_cols = st.multiselect("📊 اختر الأعمدة للتجميع (Group By):", options=df.columns)
-        count_col = st.selectbox("🔢 اختر العمود المراد عده (COUNT):", options=df.columns)
-
-        if group_cols and count_col and st.button("🚀 تنفيذ التحليل المخصص"):
-            progress = st.progress(0, text="🤖 باسم يحلل البيانات...")
-            total_steps = 3
-
-            # الخطوة 1️⃣ - تجهيز البيانات
-            progress.progress(1/total_steps, text="🧮 تجميع البيانات...")
-
-            # الخطوة 2️⃣ - حساب عدد الصفوف حسب الأعمدة المحددة
-            grouped = df.groupby(group_cols)[count_col].count().reset_index()
-            grouped = grouped.rename(columns={count_col: "عدد الصفوف"})
-
-            progress.progress(2/total_steps, text="📊 تجهيز النتائج...")
-
-            # الخطوة 3️⃣ - عرض وتحميل النتائج
-            st.dataframe(grouped, use_container_width=True, height=450)
-
-            # زر تحميل النتائج
-            out_file = "نتائج_تحليل_مخصص.xlsx"
-            grouped.to_excel(out_file, index=False, engine="openpyxl")
-            with open(out_file, "rb") as f:
-                st.download_button("⬇️ تحميل النتائج (Excel)", f,
-                    file_name="نتائج_تحليل_مخصص.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-            progress.progress(1.0, text="✅ تم التحليل بنجاح بواسطة باسم!")
-    except Exception as e:
-        st.error(f"❌ حدث خطأ أثناء التحليل: {e}")
+with tab_count_custom:
+    st.subheader("🧮 تحليل بيانات الناخبين حسب حقل محدد (COUNT)")
+    
+    st.markdown("لم يتم توفير كود هذا التبويب في السؤال الأصلي، يمكنك إضافته هنا.")
