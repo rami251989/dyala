@@ -6,3 +6,4 @@ python-dotenv
 google-cloud-vision
 opencv-python
 Pillow
+opencv-python-headless
