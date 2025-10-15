@@ -820,19 +820,45 @@ if uploaded_group:
             progress.progress(1.0, text="✅ تم التحليل بنجاح بواسطة باسم!")
     except Exception as e:
         st.error(f"❌ حدث خطأ أثناء التحليل: {e}")
+
 # ----------------------------------------------------------------------------- #
-# 9) 🧾 توليد PDF QR (24 QR بكل صفحة + دعم العربية)
+# 9) 🧾 توليد PDF QR (24 QR بكل صفحة + دعم العربية مع فحص الخط)
 # ----------------------------------------------------------------------------- #
 with tab_qr:
     st.subheader("🧾 توليد PDF يحتوي على QR Codes (يدعم العربية)")
+
+    # ✅ دالة تضمن توفر الخط Amiri أو تعطي بديل آمن
+    def ensure_arabic_font():
+        from reportlab.pdfbase import pdfmetrics
+        try:
+            registered = set(pdfmetrics.getRegisteredFontNames())
+            if "Amiri" in registered:
+                return "Amiri"
+        except Exception:
+            pass
+
+        # جرّب تسجيل الخط من مجلد fonts
+        try:
+            from reportlab.pdfbase.ttfonts import TTFont
+            font_dir = "fonts"
+            font_path = os.path.join(font_dir, "Amiri-Regular.ttf")
+            if os.path.isfile(font_path):
+                pdfmetrics.registerFont(TTFont("Amiri", font_path))
+                return "Amiri"
+            else:
+                st.warning("⚠️ لم يتم العثور على fonts/Amiri-Regular.ttf — سيتم استخدام Helvetica مؤقتًا.")
+                return "Helvetica"
+        except Exception as e:
+            st.warning(f"⚠️ تعذر تسجيل خط Amiri ({e}) — سيتم استخدام Helvetica مؤقتًا.")
+            return "Helvetica"
 
     uploaded_qr = st.file_uploader("📤 ارفع ملف Excel يحتوي الأعمدة (الاسم – مندوب رئيسي – رمز QR)", type=["xlsx"])
 
     if uploaded_qr:
         try:
             df_qr = pd.read_excel(uploaded_qr, engine="openpyxl")
-        except:
-            st.error("❌ لا يمكن قراءة الملف، تأكد أنه Excel (.xlsx)")
+        except Exception as e:
+            st.error(f"❌ لا يمكن قراءة الملف: {e}")
             st.stop()
 
         required_cols = ["الاسم", "مندوب رئيسي", "رمز QR"]
@@ -843,11 +869,14 @@ with tab_qr:
 
         if st.button("🚀 إنشاء ملف PDF"):
             try:
+                # تأكد من تجهيز الخط قبل الرسم
+                font_name = ensure_arabic_font()
+
                 pdf_file = "qr_output.pdf"
                 c = canvas.Canvas(pdf_file, pagesize=A4)
 
                 rows, cols = 6, 4  # ✅ 24 في الصفحة
-                qr_size = 90  # ✅ حجم مناسب وواضح
+                qr_size = 90       # ✅ حجم مناسب وواضح
                 page_width, page_height = A4
                 x_margin, y_margin = 40, 50
                 spacing_x = (page_width - 2 * x_margin - cols * qr_size) / (cols - 1)
@@ -855,13 +884,15 @@ with tab_qr:
 
                 count = 0
                 for _, row in df_qr.iterrows():
-                    name = str(row["الاسم"])
-                    rep = str(row["مندوب رئيسي"])
-                    link = str(row["رمز QR"])
+                    # تنظيف القيم (تجنب NaN)
+                    name = str(row["الاسم"]) if pd.notna(row["الاسم"]) else ""
+                    rep  = str(row["مندوب رئيسي"]) if pd.notna(row["مندوب رئيسي"]) else ""
+                    link = str(row["رمز QR"]) if pd.notna(row["رمز QR"]) else ""
 
                     if count % 24 == 0 and count != 0:
                         c.showPage()
 
+                    # توليد QR إلى ملف مؤقت (ReportLab يفضل المسار)
                     qr = qrcode.make(link)
                     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
                     qr.save(temp_file.name)
@@ -874,8 +905,9 @@ with tab_qr:
 
                     c.drawImage(temp_file.name, x, y, width=qr_size, height=qr_size)
 
-                    # ✅ دعم النص العربي بخط Amiri
-                    c.setFont("Amiri", 10)
+                    # 🔤 الخط (Amiri إن وُجد، وإلا Helvetica كبديل)
+                    c.setFont(font_name, 10)
+                    # نرسم النص بمحاذاة يمين تحت الـ QR كسطرين
                     c.drawRightString(x + qr_size, y - 12, name)
                     c.drawRightString(x + qr_size, y - 24, f"مندوب رئيسي: {rep}")
 
@@ -890,4 +922,3 @@ with tab_qr:
 
             except Exception as e:
                 st.error(f"❌ حدث خطأ أثناء إنشاء PDF: {e}")
-
