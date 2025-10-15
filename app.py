@@ -826,53 +826,74 @@ tab_qr = st.tabs(["🧾 توليد QR PDF"])[0]
 with tab_qr:
     st.subheader("🧾 توليد PDF يحتوي QR Codes")
 
-    uploaded_qr = st.file_uploader("📤 ارفع ملف Excel يحتوي (الاسم - مندوب رئيسي - رمز QR)", type=["xlsx"], key="file_qr")
+    st.markdown("""
+    📌 **تعليمات:**
+    - الملف يجب أن يحتوي على الأعمدة التالية:
+      - `الاسم`
+      - `مندوب رئيسي`
+      - `رمز QR`
+    - سيتم إنشاء PDF يحتوي على 100 QR في كل صفحة.
+    - أسفل كل QR سيتم كتابة (اسم الناخب + الركيزة).
+    """)
+
+    uploaded_qr = st.file_uploader("📤 ارفع ملف Excel", type=["xlsx"], key="file_qr")
 
     if uploaded_qr:
         df_qr = pd.read_excel(uploaded_qr, engine="openpyxl")
 
+        # التأكد من الأعمدة المطلوبة
         required_cols = ["الاسم", "مندوب رئيسي", "رمز QR"]
         missing = [c for c in required_cols if c not in df_qr.columns]
         if missing:
-            st.error(f"❌ الأعمدة التالية ناقصة في الملف: {', '.join(missing)}")
+            st.error(f"❌ الملف ناقص الأعمدة التالية: {', '.join(missing)}")
         else:
             if st.button("🚀 توليد PDF"):
-                pdf_file = "qr_output.pdf"
-                c = canvas.Canvas(pdf_file, pagesize=A4)
+                try:
+                    pdf_file = "qr_output.pdf"
+                    c = canvas.Canvas(pdf_file, pagesize=A4)
 
-                rows, cols = 10, 10
-                qr_size = 50
-                page_width, page_height = A4
-                x_margin, y_margin = 30, 40
-                spacing_x = (page_width - 2 * x_margin - cols * qr_size) / (cols - 1)
-                spacing_y = (page_height - 2 * y_margin - rows * qr_size) / (rows - 1)
+                    rows, cols = 10, 10
+                    qr_size = 50
+                    page_width, page_height = A4
+                    x_margin, y_margin = 30, 40
+                    spacing_x = (page_width - 2 * x_margin - cols * qr_size) / (cols - 1)
+                    spacing_y = (page_height - 2 * y_margin - rows * qr_size) / (rows - 1)
 
-                count = 0
-                for index, row in df_qr.iterrows():
-                    if count % 100 == 0 and count != 0:
-                        c.showPage()
+                    count = 0
+                    for index, row in df_qr.iterrows():
+                        if count % 100 == 0 and count != 0:
+                            c.showPage()
 
-                    qr = qrcode.make(row["رمز QR"])
-                    img_buffer = io.BytesIO()
-                    qr.save(img_buffer, format="PNG")
-                    img_buffer.seek(0)
+                        # توليد QR إلى ملف مؤقت
+                        qr = qrcode.make(str(row["رمز QR"]))
+                        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+                        qr.save(temp_file.name)
 
-                    row_pos = (count % 100) // cols
-                    col_pos = (count % 100) % cols
+                        row_pos = (count % 100) // cols
+                        col_pos = (count % 100) % cols
 
-                    x = x_margin + col_pos * (qr_size + spacing_x)
-                    y = page_height - y_margin - (row_pos + 1) * (qr_size + spacing_y)
+                        x = x_margin + col_pos * (qr_size + spacing_x)
+                        y = page_height - y_margin - (row_pos + 1) * (qr_size + spacing_y)
 
-                    c.drawImage(img_buffer, x, y, width=qr_size, height=qr_size)
+                        c.drawImage(temp_file.name, x, y, width=qr_size, height=qr_size)
 
-                    c.setFont("Helvetica", 6)
-                    c.drawString(x, y - 10, str(row["الاسم"]))
-                    c.drawString(x, y - 20, str(row["مندوب رئيسي"]))
+                        c.setFont("Helvetica", 6)
+                        c.drawString(x, y - 10, str(row["الاسم"]))
+                        c.drawString(x, y - 20, str(row["مندوب رئيسي"]))
 
-                    count += 1
+                        count += 1
 
-                c.save()
+                    c.save()
 
-                with open(pdf_file, "rb") as f:
-                    st.download_button("⬇️ تحميل ملف QR PDF", f, file_name="qr_codes.pdf",
-                        mime="application/pdf")
+                    with open(pdf_file, "rb") as f:
+                        st.download_button(
+                            "⬇️ تحميل ملف QR PDF",
+                            f,
+                            file_name="qr_codes.pdf",
+                            mime="application/pdf"
+                        )
+
+                    st.success("✅ تم إنشاء ملف PDF بنجاح!")
+
+                except Exception as e:
+                    st.error(f"❌ حدث خطأ أثناء التوليد: {e}")
