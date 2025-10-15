@@ -822,103 +822,77 @@ if uploaded_group:
         st.error(f"❌ حدث خطأ أثناء التحليل: {e}")
 
 # ----------------------------------------------------------------------------- #
-# 9) 🧾 توليد PDF QR (24 QR بكل صفحة + دعم العربية مع فحص الخط)
+# 9) 🧾 توليد PDF QR (24 QR في الصفحة + دعم عربي كامل + محاذاة وسط)
 # ----------------------------------------------------------------------------- #
 with tab_qr:
-    st.subheader("🧾 توليد PDF يحتوي على QR Codes (يدعم العربية)")
+    st.subheader("🧾 توليد PDF يحتوي QR Codes (يدعم العربية)")
 
-    # ✅ دالة تضمن توفر الخط Amiri أو تعطي بديل آمن
-    def ensure_arabic_font():
-        from reportlab.pdfbase import pdfmetrics
-        try:
-            registered = set(pdfmetrics.getRegisteredFontNames())
-            if "Amiri" in registered:
-                return "Amiri"
-        except Exception:
-            pass
-
-        # جرّب تسجيل الخط من مجلد fonts
-        try:
-            from reportlab.pdfbase.ttfonts import TTFont
-            font_dir = "fonts"
-            font_path = os.path.join(font_dir, "Amiri-Regular.ttf")
-            if os.path.isfile(font_path):
+    # تسجيل خط Amiri لدعم العربية
+    def register_amiri_font():
+        font_path = "fonts/Amiri-Regular.ttf"
+        if os.path.exists(font_path):
+            try:
                 pdfmetrics.registerFont(TTFont("Amiri", font_path))
                 return "Amiri"
-            else:
-                st.warning("⚠️ لم يتم العثور على fonts/Amiri-Regular.ttf — سيتم استخدام Helvetica مؤقتًا.")
+            except:
+                st.warning("⚠️ فشل تحميل خط Amiri - سيتم استخدام الخط الافتراضي.")
                 return "Helvetica"
-        except Exception as e:
-            st.warning(f"⚠️ تعذر تسجيل خط Amiri ({e}) — سيتم استخدام Helvetica مؤقتًا.")
+        else:
+            st.warning("⚠️ ملف Amiri-Regular.ttf غير موجود في مجلد fonts.")
             return "Helvetica"
 
-    uploaded_qr = st.file_uploader("📤 ارفع ملف Excel يحتوي الأعمدة (الاسم – مندوب رئيسي – رمز QR)", type=["xlsx"])
+    font_name = register_amiri_font()
+
+    uploaded_qr = st.file_uploader("📤 ارفع ملف Excel يحتوي (الاسم - مندوب رئيسي - رمز QR)", type=["xlsx"])
 
     if uploaded_qr:
-        try:
-            df_qr = pd.read_excel(uploaded_qr, engine="openpyxl")
-        except Exception as e:
-            st.error(f"❌ لا يمكن قراءة الملف: {e}")
-            st.stop()
+        df_qr = pd.read_excel(uploaded_qr, engine="openpyxl")
 
+        # التحقق من الأعمدة
         required_cols = ["الاسم", "مندوب رئيسي", "رمز QR"]
-        missing = [c for c in required_cols if c not in df_qr.columns]
-        if missing:
-            st.error(f"❌ الملف ينقصه الأعمدة التالية: {', '.join(missing)}")
-            st.stop()
-
-        if st.button("🚀 إنشاء ملف PDF"):
-            try:
-                # تأكد من تجهيز الخط قبل الرسم
-                font_name = ensure_arabic_font()
-
-                pdf_file = "qr_output.pdf"
+        if not all(col in df_qr.columns for col in required_cols):
+            st.error("❌ يجب أن يحتوي الملف على الأعمدة التالية: الاسم، مندوب رئيسي، رمز QR")
+        else:
+            if st.button("🚀 إنشاء ملف PDF"):
+                pdf_file = "qr_codes.pdf"
                 c = canvas.Canvas(pdf_file, pagesize=A4)
 
-                rows, cols = 6, 4  # ✅ 24 في الصفحة
-                qr_size = 90       # ✅ حجم مناسب وواضح
+                rows, cols = 6, 4  # 24 QR في الصفحة
+                qr_size = 90
                 page_width, page_height = A4
-                x_margin, y_margin = 40, 50
-                spacing_x = (page_width - 2 * x_margin - cols * qr_size) / (cols - 1)
-                spacing_y = (page_height - 2 * y_margin - rows * qr_size) / (rows - 1)
+                x_margin, y_margin = 50, 70
+                spacing_x = (page_width - 2*x_margin - cols*qr_size) / (cols - 1)
+                spacing_y = (page_height - 2*y_margin - rows*qr_size) / (rows - 1)
 
                 count = 0
                 for _, row in df_qr.iterrows():
-                    # تنظيف القيم (تجنب NaN)
-                    name = str(row["الاسم"]) if pd.notna(row["الاسم"]) else ""
-                    rep  = str(row["مندوب رئيسي"]) if pd.notna(row["مندوب رئيسي"]) else ""
-                    link = str(row["رمز QR"]) if pd.notna(row["رمز QR"]) else ""
-
                     if count % 24 == 0 and count != 0:
                         c.showPage()
 
-                    # توليد QR إلى ملف مؤقت (ReportLab يفضل المسار)
-                    qr = qrcode.make(link)
-                    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-                    qr.save(temp_file.name)
+                    qr = qrcode.make(str(row["رمز QR"]))
+                    temp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+                    qr.save(temp.name)
 
                     row_pos = (count % 24) // cols
                     col_pos = (count % 24) % cols
-
                     x = x_margin + col_pos * (qr_size + spacing_x)
-                    y = page_height - y_margin - (row_pos + 1) * (qr_size + spacing_y)
+                    y = page_height - y_margin - (row_pos + 1)*(qr_size + spacing_y)
 
-                    c.drawImage(temp_file.name, x, y, width=qr_size, height=qr_size)
+                    c.drawImage(temp.name, x, y, width=qr_size, height=qr_size)
 
-                    # 🔤 الخط (Amiri إن وُجد، وإلا Helvetica كبديل)
+                    # ✅ دعم العربية الصحيح + محاذاة وسط
+                    name = get_display(arabic_reshaper.reshape(str(row["الاسم"])))
+                    rep = get_display(arabic_reshaper.reshape(f"مندوب رئيسي: {str(row['مندوب رئيسي'])}"))
+
                     c.setFont(font_name, 10)
-                    # نرسم النص بمحاذاة يمين تحت الـ QR كسطرين
-                    c.drawRightString(x + qr_size, y - 12, name)
-                    c.drawRightString(x + qr_size, y - 24, f"مندوب رئيسي: {rep}")
+                    c.drawCentredString(x + qr_size/2, y - 14, name)
+                    c.drawCentredString(x + qr_size/2, y - 28, rep)
 
                     count += 1
 
                 c.save()
 
                 with open(pdf_file, "rb") as f:
-                    st.download_button("⬇️ تحميل ملف PDF", f, file_name="qr_codes.pdf", mime="application/pdf")
+                    st.download_button("⬇️ تحميل ملف PDF", f, file_name=pdf_file, mime="application/pdf")
 
-                st.success("✅ تم توليد ملف QR بنجاح!")
-
-            except Exception as e:
-                st.error(f"❌ حدث خطأ أثناء إنشاء PDF: {e}")
+                st.success("✅ تم توليد ملف QR PDF بنجاح!")
