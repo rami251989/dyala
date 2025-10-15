@@ -894,7 +894,7 @@ with tab_qr:
                 count = 0
                 for _, row in df_qr.iterrows():
                     name = fix_arabic_text(str(row["الاسم"]))
-                    rep = fix_arabic_text(f"مندوب رئيسي: {row['مندوب رئيسي']}")
+                    rep = fix_arabic_text(str(row['مندوب رئيسي']))
                     link = str(row["رمز QR"])
 
                     if count % 24 == 0 and count != 0:
