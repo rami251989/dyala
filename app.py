@@ -33,7 +33,7 @@ import openpyxl
 load_dotenv()
 
 USERNAME = "admin"
-PASSWORD = "Moraqip@123"
+PASSWORD = "hasoka5555"
 
 st.set_page_config(page_title="المراقب الذكي", layout="wide")
 
